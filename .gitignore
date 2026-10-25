@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Nunca subir claves de sinatura nin APK/AAB compilados (o CI xera os seus)
+*.keystore
+*.jks
+*.apk
+*.aab
+
+# Caché do compilador de Kotlin e builds de cada módulo
+.kotlin/
+**/build/
+
+design.md

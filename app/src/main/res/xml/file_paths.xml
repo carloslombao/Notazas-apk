@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cartafol temporal onde se gardan os PDF de exames descargados para
+     previsualizar (ver datos/util/DescargarPdf.kt) antes de compartilos
+     cun visor externo a través do FileProvider. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="pdfs_temporais" path="pdfs/" />
+    <!-- AutoUpdater (CSAbhiOnline) descarga o APK de actualización en
+         getExternalFilesDir("Download") e instaláao a través deste FileProvider. -->
+    <external-files-path name="downloads" path="Download/" />
+</paths>

@@ -1,0 +1,94 @@
+name: Build APK
+
+# Cada push a main: compila o APK de release asinado, súbeo como artefacto e
+# publícao nun GitHub Release xunto co update.json que le a app (AutoUpdater).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Necesario para crear o release (a app descarga o APK dos assets do release).
+permissions:
+  contents: write
+
+# Se hai varios pushes seguidos, só importa o último.
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Descargar o código
+        uses: actions/checkout@v4
+
+      - name: Instalar JDK 17 (con caché de Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Aceptar licenzas do Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      # IMPORTANTE: para ACTUALIZAR unha app xa instalada o APK ten que ir asinado coa MESMA clave.
+      # Un keystore novo en cada execución cambia a sinatura e Android rexeita a actualización.
+      # Por iso se restaura do segredo DEBUG_KEYSTORE_BASE64 e só se xera un novo (keytool) se
+      # o segredo non existe (primeira proba, ou se non te importa reinstalar a app).
+      - name: Preparar ~/.android/debug.keystore
+        env:
+          DEBUG_KEYSTORE_BASE64: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p ~/.android
+          if [ -n "$DEBUG_KEYSTORE_BASE64" ]; then
+            echo "$DEBUG_KEYSTORE_BASE64" | base64 -d > ~/.android/debug.keystore
+            echo "Keystore restaurado desde o segredo."
+          else
+            echo "::warning::Sen segredo DEBUG_KEYSTORE_BASE64: xérase un keystore novo e as actualizacións sobre unha instalación anterior FALLARÁN (sinatura distinta)."
+            keytool -genkeypair -v \
+              -keystore ~/.android/debug.keystore \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Compilar o APK de release
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease \
+            -Pci.versionCode=${{ github.run_number }} \
+            -Pci.versionName=1.0.${{ github.run_number }}
+
+      - name: Subir o APK como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: notazas-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      # update.json: o que le a librería AutoUpdater na app. A versión é a MESMA co que se compilou.
+      - name: Xerar update.json
+        env:
+          VERSION: 1.0.${{ github.run_number }}
+          MSG: ${{ github.event.head_commit.message }}
+          REPO: ${{ github.repository }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk notazas.apk
+          jq -n --arg v "$VERSION" --arg c "$MSG" \
+            --arg u "https://github.com/$REPO/releases/download/v$VERSION/notazas.apk" \
+            '{latest_version: $v, changelog: $c, apk_url: $u}' > update.json
+          cat update.json
+
+      # /releases/latest/download/update.json apunta sempre ao release máis recente.
+      - name: Publicar o release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Notazas 1.0.${{ github.run_number }}
+          files: |
+            notazas.apk
+            update.json

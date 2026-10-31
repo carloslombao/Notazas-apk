@@ -18,15 +18,17 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Fixado a 24.04: "ubuntu-latest" migra a Ubuntu 26 (outubro 2026) e esa imaxe pode traer
+    # un Android SDK/JDK distintos. Cando queiras, proba a subir a versión con calma.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
       - name: Descargar o código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Instalar JDK 17 (con caché de Gradle)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -59,9 +61,21 @@ jobs:
       - name: Compilar o APK de release
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease \
+          ./gradlew assembleRelease --console=plain --stacktrace \
+            -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8" \
             -Pci.versionCode=${{ github.run_number }} \
             -Pci.versionName=1.0.${{ github.run_number }}
+
+      # Se falla a compilación, gardar os informes de Gradle para poder miralos desde GitHub.
+      - name: Subir informes se falla a compilación
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: informes-gradle
+          path: |
+            app/build/reports/
+            app/build/outputs/logs/
+          if-no-files-found: ignore
 
       - name: Subir o APK como artefacto
         uses: actions/upload-artifact@v4

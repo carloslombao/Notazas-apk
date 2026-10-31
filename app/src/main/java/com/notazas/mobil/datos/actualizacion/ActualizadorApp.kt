@@ -5,7 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
 import android.util.Log
-import com.example.autoupdater.AutoUpdaterManager
+import AutoUpdaterManager
 import com.example.autoupdater.UpdateFeatures
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers

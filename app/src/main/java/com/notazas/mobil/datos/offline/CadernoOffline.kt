@@ -20,7 +20,8 @@ import kotlin.math.round
  * snapshot. Replica calculo_notas.py do backend — se alí cambia a
  * fórmula, hai que cambiala aquí.
  *
- * Ids sintéticos: columna = hash do nome, alumno = idAlumnoOffline().
+ * Ids sintéticos: columna = hash da súa CHAVE (uid; ver ColumnasOffline.kt — o nome
+ * non é único), alumno = idAlumnoOffline().
  */
 
 data class CadernoOfflineDatos(
@@ -28,8 +29,6 @@ data class CadernoOfflineDatos(
     val ponderacion: PonderacionOut?,
     val filas: List<FilaAlumnoGradebook>
 )
-
-fun idColumnaOffline(nome: String): Int = nome.hashCode()
 
 /** "2026-10-18T09:27:15.134" (UTC, do servidor) -> "18/10 11:27" na hora do móvil. */
 fun etiquetaDatosOffline(iso: String?): String? {
@@ -48,6 +47,11 @@ private val TIPOS_VISIBLES = setOf("exame", "traballo", "destrezas")
 
 private fun redondear2(v: Double): Double = round(v * 100.0) / 100.0
 
+/** A recuperación `r` é a elixida pola nota (por uid; sen uid, polo nome). */
+private fun eAElixida(nota: SnapshotNota, r: SnapshotColumna): Boolean =
+    if (!nota.columna_recuperacion_elixida_uid.isNullOrEmpty()) r.uid == nota.columna_recuperacion_elixida_uid
+    else r.nome == nota.columna_recuperacion_elixida
+
 /** Valor efectivo dun exame para un alumno, tendo en conta a
  * recuperación elixida (mesma lóxica ca _valor_efectivo_exame). */
 private fun valorEfectivoExame(
@@ -59,7 +63,7 @@ private fun valorEfectivoExame(
     val criterio = notaOrixinal?.criterio_recuperacion
     if (recuperacions.isEmpty() || notaOrixinal == null || criterio.isNullOrEmpty() || criterio == "orixinal") return valorOrix
 
-    val elixida = recuperacions.firstOrNull { it.nome == notaOrixinal.columna_recuperacion_elixida } ?: return valorOrix
+    val elixida = recuperacions.firstOrNull { eAElixida(notaOrixinal, it) } ?: return valorOrix
     val valorRecup = notaDe(elixida)?.valor ?: return valorOrix
     return when (criterio) {
         "recuperacion" -> valorRecup
@@ -76,9 +80,17 @@ private fun mediaSemanaActitude(valores: Collection<Int>): Double? {
 
 fun construirCadernoOffline(entrada: CacheAsignacionEntrada, trimestreNome: String): CadernoOfflineDatos {
     val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: SnapshotTrimestre()
-    val columnasSnap = trimestre.columnas.filter { it.tipo in TIPOS_VISIBLES }
-    val recuperacionsSnap = trimestre.columnas.filter { it.tipo == "recuperacion" }
-    val notasPor = trimestre.notas.associateBy { it.alumno to it.columna }
+    val todasColumnas = trimestre.columnas
+    val columnasSnap = todasColumnas.filter { it.tipo in TIPOS_VISIBLES }
+    val recuperacionsSnap = todasColumnas.filter { it.tipo == "recuperacion" }
+
+    // (alumno, chave da columna) -> nota. A columna da nota resólvese polo uid (sen uid, polo
+    // nome): así un exame "U1" e un traballo "U1" non pisan as notas un do outro.
+    val notasPor = HashMap<Pair<String, String>, SnapshotNota>()
+    trimestre.notas.forEach { n ->
+        val i = n.indiceColumna(todasColumnas)
+        if (i >= 0) notasPor[n.alumno to todasColumnas[i].chave()] = n
+    }
 
     val ponderacion = trimestre.ponderacion?.let {
         PonderacionOut(it.pct_exames ?: 0.0, it.pct_traballos ?: 0.0, it.pct_actitude ?: 0.0)
@@ -92,18 +104,22 @@ fun construirCadernoOffline(entrada: CacheAsignacionEntrada, trimestreNome: Stri
         val recuperacions = mutableMapOf<String, RecuperacionInfo>()
 
         columnasSnap.forEach { col ->
-            val id = idColumnaOffline(col.nome)
-            val notaOrix = notasPor[clave to col.nome]
+            val id = idColumnaOffline(col)
+            val notaOrix = notasPor[clave to col.chave()]
             if (col.tipo == "exame") {
-                val recups = recuperacionsSnap.filter { it.columna_orixinal == col.nome }
-                notas[id.toString()] = valorEfectivoExame(notaOrix, recups) { notasPor[clave to it.nome] }
+                // Recuperacións deste exame: polo uid orixinal (sen uid, polo nome entre os exames).
+                val recups = recuperacionsSnap.filter { r ->
+                    val ix = indiceExameOrixinal(todasColumnas, r.columna_orixinal_uid, r.columna_orixinal)
+                    ix >= 0 && todasColumnas[ix].chave() == col.chave()
+                }
+                notas[id.toString()] = valorEfectivoExame(notaOrix, recups) { notasPor[clave to it.chave()] }
                 if (recups.isNotEmpty()) {
                     recuperacions[id.toString()] = RecuperacionInfo(
                         valor_orixinal = notaOrix?.valor,
                         criterio = notaOrix?.criterio_recuperacion?.takeIf { it.isNotEmpty() } ?: "orixinal",
-                        columna_elixida_id = notaOrix?.columna_recuperacion_elixida?.let { idColumnaOffline(it) },
+                        columna_elixida_id = notaOrix?.let { n -> recups.firstOrNull { eAElixida(n, it) } }?.let { idColumnaOffline(it) },
                         opcions = recups.map { r ->
-                            OpcionRecuperacion(idColumnaOffline(r.nome), r.nome, notasPor[clave to r.nome]?.valor)
+                            OpcionRecuperacion(idColumnaOffline(r), r.nome, notasPor[clave to r.chave()]?.valor)
                         }
                     )
                 }
@@ -113,11 +129,11 @@ fun construirCadernoOffline(entrada: CacheAsignacionEntrada, trimestreNome: Stri
         }
 
         val mediaExames = columnasSnap.filter { it.tipo == "exame" || it.tipo == "destrezas" }
-            .mapNotNull { notas[idColumnaOffline(it.nome).toString()] }
+            .mapNotNull { notas[idColumnaOffline(it).toString()] }
             .let { if (it.isEmpty()) null else it.average() }
         val mediaTraballos = if (tenTraballos) {
             columnasSnap.filter { it.tipo == "traballo" }
-                .mapNotNull { notas[idColumnaOffline(it.nome).toString()] }
+                .mapNotNull { notas[idColumnaOffline(it).toString()] }
                 .let { if (it.isEmpty()) null else it.average() }
         } else null
         val mediaActitude = trimestre.actitude.filter { it.alumno == clave }
@@ -181,10 +197,6 @@ fun actitudeAlumnoOffline(
         }
 }
 
-/** Nome dunha columna (calquera tipo, incluídas recuperacións) polo id sintético. */
-fun nomeColumnaPorId(entrada: CacheAsignacionEntrada, trimestreNome: String, id: Int): String? =
-    entrada.snapshot.trimestres[trimestreNome]?.columnas?.firstOrNull { idColumnaOffline(it.nome) == id }?.nome
-
 fun alumnoOfflinePorId(entrada: CacheAsignacionEntrada, id: Int): SnapshotAlumnoBase? =
     entrada.snapshot.alumnado.firstOrNull { idAlumnoOffline(it.nome, it.apelidos) == id }
 
@@ -195,45 +207,52 @@ private fun CacheAsignacionEntrada.conTrimestre(trimestreNome: String, novo: Sna
     )
 )
 
-/** Garda (ou borra, con valor null) a nota dun alumno nunha columna,
- * conservando o criterio de recuperación que xa tivese. */
+/** Garda (ou borra, con valor null) a nota dun alumno nunha columna, conservando o
+ * criterio de recuperación que xa tivese. A nota pertence á columna POLO SEU UID (non
+ * polo nome) e queda gravada con `columna_uid`. */
 fun gardarNotaOffline(
-    entrada: CacheAsignacionEntrada, trimestreNome: String, columnaNome: String,
+    entrada: CacheAsignacionEntrada, trimestreNome: String, columna: SnapshotColumna,
     alumnoNome: String, alumnoApelidos: String, valor: Double?
 ): CacheAsignacionEntrada {
     val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: SnapshotTrimestre()
     val clave = claveAlumno(alumnoNome, alumnoApelidos)
-    val existente = trimestre.notas.firstOrNull { it.alumno == clave && it.columna == columnaNome }
-    val resto = trimestre.notas.filterNot { it.alumno == clave && it.columna == columnaNome }
+    val existente = trimestre.notaDe(clave, columna)
+    val resto = trimestre.notasSenEsta(clave, columna)
     val ahora = horaIsoUtcEstiloPython()
 
     val nova = when {
         // Cada edición leva a súa data (v2): é o que permite fusionar nota a nota.
         // Borrar unha nota existente conserva a fila con valor null e data: se se
         // quitase a fila, a nota remota volvería a aparecer ao fusionar.
-        existente != null -> existente.copy(valor = valor, modificado_en = ahora)
-        valor != null -> SnapshotNota(alumno = clave, columna = columnaNome, valor = valor, modificado_en = ahora)
+        existente != null -> existente.copy(
+            valor = valor, modificado_en = ahora, columna = columna.nome, columna_uid = columna.uid
+        )
+        valor != null -> SnapshotNota(
+            alumno = clave, columna = columna.nome, columna_uid = columna.uid, valor = valor, modificado_en = ahora
+        )
         else -> return entrada // nada que borrar e nada que gardar
     }
-    val notas = resto + nova
-    return entrada.conTrimestre(trimestreNome, trimestre.copy(notas = notas))
+    return entrada.conTrimestre(trimestreNome, trimestre.copy(notas = resto + nova))
 }
 
 /** Garda o criterio de recuperación dun exame ("orixinal",
- * "recuperacion" ou "media") para un alumno. */
+ * "recuperacion" ou "media") para un alumno. `elixida` é a columna de recuperación
+ * escollida (null para "orixinal"); gárdase o seu nome E o seu uid. */
 fun gardarCriterioRecuperacionOffline(
-    entrada: CacheAsignacionEntrada, trimestreNome: String, exameNome: String,
-    alumnoNome: String, alumnoApelidos: String, criterio: String, columnaElixidaNome: String?
+    entrada: CacheAsignacionEntrada, trimestreNome: String, exame: SnapshotColumna,
+    alumnoNome: String, alumnoApelidos: String, criterio: String, elixida: SnapshotColumna?
 ): CacheAsignacionEntrada {
     val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: SnapshotTrimestre()
     val clave = claveAlumno(alumnoNome, alumnoApelidos)
-    val existente = trimestre.notas.firstOrNull { it.alumno == clave && it.columna == exameNome }
-        ?: SnapshotNota(alumno = clave, columna = exameNome, valor = null)
+    val existente = trimestre.notaDe(clave, exame)
+        ?: SnapshotNota(alumno = clave, columna = exame.nome, columna_uid = exame.uid, valor = null)
+    val elixidaFinal = if (criterio == "orixinal") null else elixida
     val actualizada = existente.copy(
+        columna = exame.nome, columna_uid = exame.uid,
         criterio_recuperacion = criterio,
-        columna_recuperacion_elixida = if (criterio == "orixinal") null else columnaElixidaNome,
+        columna_recuperacion_elixida = elixidaFinal?.nome,
+        columna_recuperacion_elixida_uid = elixidaFinal?.uid,
         modificado_en = horaIsoUtcEstiloPython()
     )
-    val resto = trimestre.notas.filterNot { it.alumno == clave && it.columna == exameNome }
-    return entrada.conTrimestre(trimestreNome, trimestre.copy(notas = resto + actualizada))
+    return entrada.conTrimestre(trimestreNome, trimestre.copy(notas = trimestre.notasSenEsta(clave, exame) + actualizada))
 }

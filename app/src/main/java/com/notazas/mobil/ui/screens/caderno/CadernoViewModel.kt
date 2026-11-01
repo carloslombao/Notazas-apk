@@ -30,7 +30,7 @@ import com.notazas.mobil.datos.offline.gardarDestrezaOffline
 import com.notazas.mobil.datos.offline.gardarLocalPendente
 import com.notazas.mobil.datos.offline.gardarNotaOffline
 import com.notazas.mobil.datos.offline.lerAcertosOffline
-import com.notazas.mobil.datos.offline.nomeColumnaPorId
+import com.notazas.mobil.datos.offline.columnaOfflinePorId
 import com.notazas.mobil.datos.offline.etiquetaDatosOffline
 import com.notazas.mobil.datos.offline.prepararParaForaDoColexio
 import com.notazas.mobil.datos.offline.notaDestrezaPalabras
@@ -236,13 +236,13 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
             try {
                 if (estado.modoFoiraDeLina) {
                     val entrada = entradasOffline.first { it.asignacion_id == asignacion.id }
-                    val columnaNome = nomeColumnaPorId(entrada, trimestre.nome, columnaId)
+                    val columna = columnaOfflinePorId(entrada, trimestre.nome, columnaId)
                     val alumno = alumnoOfflinePorId(entrada, alumnoId)
-                    if (columnaNome == null || alumno == null) {
+                    if (columna == null || alumno == null) {
                         estado = estado.copy(gardando = false, erroGardar = "Non se atopou a columna ou o alumno.")
                         return@launch
                     }
-                    val nova = gardarNotaOffline(entrada, trimestre.nome, columnaNome, alumno.nome, alumno.apelidos, valor)
+                    val nova = gardarNotaOffline(entrada, trimestre.nome, columna, alumno.nome, alumno.apelidos, valor)
                     gardarOfflineYRefrescar(asignacion, trimestre, nova)
                 } else {
                     val info = estado.filas.firstOrNull { it.alumno_id == alumnoId }?.recuperacions?.get(columnaId.toString())
@@ -279,15 +279,15 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
             try {
                 if (estado.modoFoiraDeLina) {
                     val entrada = entradasOffline.first { it.asignacion_id == asignacion.id }
-                    val exameNome = nomeColumnaPorId(entrada, trimestre.nome, exameId)
+                    val exame = columnaOfflinePorId(entrada, trimestre.nome, exameId)
                     val alumno = alumnoOfflinePorId(entrada, alumnoId)
-                    if (exameNome == null || alumno == null) {
+                    if (exame == null || alumno == null) {
                         estado = estado.copy(gardando = false, erroGardar = "Non se atopou o exame ou o alumno.")
                         return@launch
                     }
-                    val elixidaNome = columnaElixidaId?.let { nomeColumnaPorId(entrada, trimestre.nome, it) }
+                    val elixida = columnaElixidaId?.let { columnaOfflinePorId(entrada, trimestre.nome, it) }
                     val nova = gardarCriterioRecuperacionOffline(
-                        entrada, trimestre.nome, exameNome, alumno.nome, alumno.apelidos, criterio, elixidaNome
+                        entrada, trimestre.nome, exame, alumno.nome, alumno.apelidos, criterio, elixida
                     )
                     gardarOfflineYRefrescar(asignacion, trimestre, nova)
                 } else {
@@ -424,7 +424,7 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
             val trimestre = estado.trimestreSeleccionado ?: return
             val entrada = entradasOffline.firstOrNull { it.asignacion_id == asignacion.id } ?: return
             val alumno = alumnoOfflinePorId(entrada, alumnoId) ?: return
-            val (listening, reading, speaking) = lerAcertosOffline(entrada, trimestre.nome, columna.nome, alumno.nome, alumno.apelidos)
+            val (listening, reading, speaking) = lerAcertosOffline(entrada, trimestre.nome, columna.id, alumno.nome, alumno.apelidos)
             mostrarFolla(columnaId, alumnoId, listening.toList(), reading.toList(), speaking.toList())
             return
         }
@@ -499,7 +499,7 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
                     val columna = estado.columnas.first { it.id == columnaId }
                     val alumno = alumnoOfflinePorId(entrada, folla.alumnoId) ?: error("Alumno non atopado")
                     val (nova, _) = gardarDestrezaOffline(
-                        entrada, trimestre.nome, columna.nome, alumno.nome, alumno.apelidos,
+                        entrada, trimestre.nome, columna.id, alumno.nome, alumno.apelidos,
                         ids(Destreza.LISTENING).toSet(), ids(Destreza.READING).toSet(), ids(Destreza.SPEAKING).toSet()
                     )
                     gardarOfflineYRefrescar(asignacion, trimestre, nova)

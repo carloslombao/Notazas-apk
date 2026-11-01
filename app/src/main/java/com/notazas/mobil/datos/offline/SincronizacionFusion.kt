@@ -13,8 +13,17 @@ import java.util.UUID
  * recente de cada un — NUNCA se sobrescribe un ficheiro enteiro.
  * Se alí cambia o algoritmo, hai que cambialo aquí.
  *
- * Regra única (remotoGana): ver a función. Datas: UTC "naive" de
- * Python (datetime.utcnow().isoformat()).
+ * IDENTIDADE DAS COLUMNAS (sección 8 do documento de sincronización): o nome NON
+ * é único (pode haber un exame "U1" e un traballo "U1" no mesmo trimestre), así
+ * que as columnas identifícanse polo `uid`, nunca por un mapa `nome -> columna`:
+ *  - Emparellamento local/remoto: primeiro por `uid`; as que quedan, por NOME E TIPO
+ *    (só se algún dos dous lados non ten uid) e adóptase o uid remoto.
+ *  - As notas buscan a súa columna por `columna_uid`; só sen uid (snapshot vello), polo nome.
+ *  - Unha lápida casa cunha columna só polo `uid` se ambas o teñen; sen uid, por
+ *    trimestre + nome + TIPO (e só se a lápida ten tipo). Se non casa, non se borra nada.
+ *
+ * Regra única (remotoGana): ver a función. Datas: UTC "naive" de Python
+ * (datetime.utcnow().isoformat()).
  */
 
 private const val DIAS_MAX_LAPIDAS = 400L
@@ -76,7 +85,7 @@ fun fusionarSnapshots(local: SnapshotAsignacion, remoto: SnapshotAsignacion, ago
     val lapidas = fusionarLapidas(local.borrados, remoto.borrados)
 
     // A data de nacemento ven do servidor (o móbil nunca a edita): se BoxAbalar ten unha, gana
-    // (tamén se o servidor a corrixiu); se non, consváse a local.
+    // (tamén se o servidor a corrixiu); se non, consérvase a local.
     val remotoPorClave = remoto.alumnado.associateBy { claveAlumno(it.nome, it.apelidos) }
     val clavesVistas = local.alumnado.map { claveAlumno(it.nome, it.apelidos) }.toMutableSet()
     val alumnado = local.alumnado.map { a ->
@@ -102,8 +111,20 @@ fun fusionarSnapshots(local: SnapshotAsignacion, remoto: SnapshotAsignacion, ago
 
 // ==================== lápidas ====================
 
-private fun lapidaDe(lapidas: List<SnapshotBorrado>, trimestre: String, uid: String?, nome: String): SnapshotBorrado? =
-    lapidas.filter { (uid != null && it.uid == uid) || (it.trimestre == trimestre && it.nome == nome) }
+/** Lápida de borrado dunha columna que PODE casar con `uid`/`nome`/`tipo`:
+ *  - Se AMBAS teñen uid: só se compara o uid (nunca o nome).
+ *  - Se falta o uid nun dos lados: trimestre + nome + tipo, e só se a lápida ten tipo. */
+internal fun lapidaCasaColumna(lapida: SnapshotBorrado, trimestre: String, uid: String?, nome: String, tipo: String): Boolean =
+    if (!lapida.uid.isNullOrEmpty() && !uid.isNullOrEmpty()) lapida.uid == uid
+    else lapida.tipo != null && lapida.trimestre == trimestre && lapida.nome == nome && lapida.tipo == tipo
+
+/** Dúas lápidas refírense á mesma columna (mesma regra: uid se ambas o teñen; senón nome + tipo). */
+private fun mesmaLapida(a: SnapshotBorrado, b: SnapshotBorrado): Boolean =
+    if (!a.uid.isNullOrEmpty() && !b.uid.isNullOrEmpty()) a.uid == b.uid
+    else a.tipo != null && a.tipo == b.tipo && a.trimestre == b.trimestre && a.nome == b.nome
+
+private fun lapidaDe(lapidas: List<SnapshotBorrado>, trimestre: String, uid: String?, nome: String, tipo: String): SnapshotBorrado? =
+    lapidas.filter { lapidaCasaColumna(it, trimestre, uid, nome, tipo) }
         .maxWithOrNull(Comparator { a, b -> (parseIso(a.t) ?: MINIMA).compareTo(parseIso(b.t) ?: MINIMA) })
 
 private fun fusionarLapidas(locais: List<SnapshotBorrado>, remotas: List<SnapshotBorrado>): List<SnapshotBorrado> {
@@ -112,143 +133,174 @@ private fun fusionarLapidas(locais: List<SnapshotBorrado>, remotas: List<Snapsho
     for (b in locais + remotas) {
         val t = parseIso(b.t) ?: continue
         if (t.isBefore(limite)) continue
-        val i = resultado.indexOfFirst { (b.uid != null && it.uid == b.uid) || (it.trimestre == b.trimestre && it.nome == b.nome) }
+        val i = resultado.indexOfFirst { mesmaLapida(it, b) }
         if (i < 0) resultado.add(b)
         else if (t.isAfter(parseIso(resultado[i].t) ?: MINIMA)) resultado[i] = b
     }
     return resultado
 }
 
+/** Lápida para gardar ao eliminar unha columna (o `tipo` é obrigatorio desde a v2.1). */
+fun lapidaDeColumna(trimestre: String, columna: SnapshotColumna, t: String = horaIsoUtcEstiloPython()): SnapshotBorrado =
+    SnapshotBorrado(uid = columna.uid, trimestre = trimestre, nome = columna.nome, tipo = columna.tipo, t = t)
+
 // ==================== trimestre ====================
 
-private fun ultimaActividade(columna: SnapshotColumna, notas: List<SnapshotNota>): LocalDateTime =
-    (listOf(parseIso(columna.modificado_en)) + notas.filter { it.columna == columna.nome }.map { parseIso(it.modificado_en) })
-        .filterNotNull().maxWithOrNull(ORDE_DATAS) ?: MINIMA
+/** Última actividade de cada columna (por posición): o máximo entre a súa `modificado_en` e a das súas notas. */
+private fun actividadePorColumna(columnas: List<SnapshotColumna>, notas: List<SnapshotNota>): List<LocalDateTime> {
+    val actividade = MutableList(columnas.size) { i -> parseIso(columnas[i].modificado_en) ?: MINIMA }
+    for (n in notas) {
+        val i = n.indiceColumna(columnas)
+        val t = parseIso(n.modificado_en)
+        if (i >= 0 && t != null && t.isAfter(actividade[i])) actividade[i] = t
+    }
+    return actividade
+}
 
 private fun fusionarTrimestre(
     nomeTrimestre: String, l: SnapshotTrimestre, r: SnapshotTrimestre, lapidas: List<SnapshotBorrado>
 ): SnapshotTrimestre {
-    // ---- Columnas locais borradas (noutra instalación) despois do seu último uso ----
-    val colsLocais = l.columnas.filter { c ->
-        val lapida = lapidaDe(lapidas, nomeTrimestre, c.uid, c.nome)
-        !(lapida != null && ultimaActividade(c, l.notas) < (parseIso(lapida.t) ?: MINIMA))
+    // ---- 1. Columnas locais vivas: bórranse só as que casan cunha lápida (uid, ou nome+tipo sen uid)
+    //         e non tiveron actividade despois dela. ----
+    val actividadeLocal = actividadePorColumna(l.columnas, l.notas)
+    val vivasOrixe = l.columnas.indices.filter { i ->
+        val c = l.columnas[i]
+        val lapida = lapidaDe(lapidas, nomeTrimestre, c.uid, c.nome, c.tipo)
+        !(lapida != null && actividadeLocal[i] < (parseIso(lapida.t) ?: MINIMA))
     }
-    val nomesVivos = colsLocais.map { it.nome }.toSet()
-    val notasLocais = l.notas.filter { it.columna in nomesVivos }
+    val novoIndiceLocal = vivasOrixe.withIndex().associate { (nova, orixe) -> orixe to nova }
 
-    // ---- Columnas ----
-    val finais = colsLocais.toMutableList()
-    // Os índices 0..colsLocais.size-1 de `finais` seguen sendo as columnas locais (só se
-    // actualizan no sitio); as columnas novas remotas engadínse ao final.
-    val nomeLocalAFinal = mutableMapOf<String, String>()   // nome local orixinal -> nome final
-    val remotoAFinal = mutableMapOf<String, String>()      // nome remoto -> nome final
-    val ganaronRemotas = mutableSetOf<String>()            // nomes remotos cuxos metadatos gañaron
-    val pctCambiadas = mutableSetOf<String>()              // nomes finais con Listening/Reading/Speaking cambiadas
+    // `finais`: os índices 0 until nLocais seguen sendo as columnas locais (actualízanse no sitio);
+    // as columnas novas que veñen do remoto engádense ao final.
+    val finais = vivasOrixe.map { l.columnas[it] }.toMutableList()
+    val nLocais = finais.size
 
-    val actividadeRemota = r.columnas.associate { c ->
-        c.nome to ultimaActividade(c, r.notas)
+    // ---- 2. Emparellar columnas locais e remotas: uid; despois nome + tipo (adoptando o uid remoto). ----
+    val emparellamento = HashMap<Int, Int>() // índice remoto -> índice en `finais`
+    val usadas = HashSet<Int>()
+    r.columnas.forEachIndexed { ri, c ->
+        if (c.uid.isNullOrEmpty()) return@forEachIndexed
+        val fi = finais.indexOfFirst { it.uid == c.uid }
+        if (fi >= 0 && usadas.add(fi)) emparellamento[ri] = fi
+    }
+    r.columnas.forEachIndexed { ri, c ->
+        if (ri in emparellamento) return@forEachIndexed
+        // Nunca só polo nome: tamén o tipo. E só se alguén non ten uid: dúas columnas con uid
+        // distinto son columnas distintas aínda que se chamen igual.
+        val fi = (0 until nLocais).firstOrNull { i ->
+            i !in usadas && finais[i].nome == c.nome && finais[i].tipo == c.tipo &&
+                (finais[i].uid.isNullOrEmpty() || c.uid.isNullOrEmpty())
+        } ?: return@forEachIndexed
+        if (!c.uid.isNullOrEmpty()) finais[fi] = finais[fi].copy(uid = c.uid) // adopta a identidade remota
+        usadas.add(fi)
+        emparellamento[ri] = fi
     }
 
-    // Emparellamento: 1) por uid, 2) por nome entre as non emparelladas
-    val emparellamento = mutableMapOf<String, Int>() // nome remoto -> índice en `finais`
-    val usadas = mutableSetOf<Int>()
-    for (c in r.columnas) {
-        if (c.uid.isNullOrEmpty()) continue
-        val i = finais.indexOfFirst { it.uid == c.uid }.takeIf { it >= 0 && it !in usadas } ?: continue
-        emparellamento[c.nome] = i; usadas.add(i)
-    }
-    for (c in r.columnas) {
-        if (c.nome in emparellamento) continue
-        val i = finais.indexOfFirst { it.nome == c.nome }.takeIf { it >= 0 && it !in usadas } ?: continue
-        if (!c.uid.isNullOrEmpty()) finais[i] = finais[i].copy(uid = c.uid) // adopta a identidade remota
-        emparellamento[c.nome] = i; usadas.add(i)
-    }
+    // ---- 3. Metadatos das columnas emparelladas e columnas novas do remoto ----
+    val actividadeRemota = actividadePorColumna(r.columnas, r.notas)
+    val ganaronRemotas = HashSet<Int>()  // índices remotos cuxos metadatos gañaron
+    val pctCambiadas = HashSet<Int>()    // índices finais con Listening/Reading/Speaking cambiadas
 
-    fun meta(c: SnapshotColumna, nome: String, data: String?): List<Any?> =
-        if (c.tipo == "destrezas") listOf(nome, data, c.pct_listening, c.pct_reading, c.pct_speaking) else listOf(nome, data)
+    fun meta(c: SnapshotColumna): List<Any?> =
+        if (c.tipo == "destrezas") listOf(c.nome, c.data, c.pct_listening, c.pct_reading, c.pct_speaking) else listOf(c.nome, c.data)
 
-    for (c in r.columnas) {
-        val i = emparellamento[c.nome]
-        if (i == null) {
-            val lapida = lapidaDe(lapidas, nomeTrimestre, c.uid, c.nome)
-            if (lapida != null && (actividadeRemota[c.nome] ?: MINIMA) < (parseIso(lapida.t) ?: MINIMA)) continue // borrada despois do último uso
-            finais.add(c.copy(uid = c.uid ?: UUID.randomUUID().toString().replace("-", "")))
-            remotoAFinal[c.nome] = c.nome
-            ganaronRemotas.add(c.nome)
-            continue
+    r.columnas.forEachIndexed { ri, c ->
+        val fi = emparellamento[ri]
+        if (fi == null) {
+            // Columna só remota: non se crea se unha lápida (por uid ou nome+tipo) é posterior á súa actividade.
+            val lapida = lapidaDe(lapidas, nomeTrimestre, c.uid, c.nome, c.tipo)
+            if (lapida != null && actividadeRemota[ri] < (parseIso(lapida.t) ?: MINIMA)) return@forEachIndexed
+            finais.add(c.copy(uid = c.uid?.takeIf { it.isNotEmpty() } ?: UUID.randomUUID().toString().replace("-", "")))
+            emparellamento[ri] = finais.size - 1
+            ganaronRemotas.add(ri)
+            return@forEachIndexed
         }
 
-        var col = finais[i]
-        val metaLocal = meta(col, col.nome, col.data)
-        val metaRemota = meta(c, c.nome, c.data)
-        if (remotoGana(metaLocal, col.modificado_en, metaRemota, c.modificado_en)) {
+        var col = finais[fi]
+        if (remotoGana(meta(col), col.modificado_en, meta(c), c.modificado_en)) {
             val pctAntigas = listOf(col.pct_listening, col.pct_reading, col.pct_speaking)
             var nova = col.copy(nome = c.nome, data = c.data, modificado_en = c.modificado_en)
             if (c.tipo == "destrezas" && c.pct_listening != null) {
                 nova = nova.copy(pct_listening = c.pct_listening, pct_reading = c.pct_reading, pct_speaking = c.pct_speaking)
-                if (pctAntigas != listOf(nova.pct_listening, nova.pct_reading, nova.pct_speaking)) pctCambiadas.add(nova.nome)
+                if (pctAntigas != listOf(nova.pct_listening, nova.pct_reading, nova.pct_speaking)) pctCambiadas.add(fi)
             }
             col = nova
-            ganaronRemotas.add(c.nome)
+            ganaronRemotas.add(ri)
         }
         col = col.copy(tipo = c.tipo)
 
-        // Lista de palabras: só se engaden as que faltan (non se edita)
+        // Lista de palabras: só se engaden as que faltan (non se edita).
         val palabrasRemotas = c.palabras
         if (c.tipo == "destrezas" && !palabrasRemotas.isNullOrEmpty()) {
             val soLocais = col.palabras.orEmpty().filter { it !in palabrasRemotas }
             col = col.copy(palabras = palabrasRemotas + soLocais)
         }
-
-        finais[i] = col
-        remotoAFinal[c.nome] = col.nome
+        finais[fi] = col
     }
 
-    // Nome local orixinal -> nome final (despois de posibles renomeamentos)
-    val nomeFinalPorIndiceLocal = colsLocais.indices.associate { idx -> colsLocais[idx].nome to finais[idx].nome }
-    nomeLocalAFinal.clear()
-    nomeLocalAFinal.putAll(nomeFinalPorIndiceLocal)
-
-    // 2ª pasada: referencias columna_orixinal (recuperacións)
-    for (idx in finais.indices) {
-        val col = finais[idx]
-        var orixinal = col.columna_orixinal?.let { nomeLocalAFinal[it] ?: it }
-        val remotaCorrespondente = r.columnas.firstOrNull { it.nome in ganaronRemotas && remotoAFinal[it.nome] == col.nome }
-        if (remotaCorrespondente?.columna_orixinal != null) {
-            orixinal = remotoAFinal[remotaCorrespondente.columna_orixinal] ?: orixinal
+    // ---- 4. Referencias columna_orixinal das recuperacións: polo uid (sen uid, polo nome entre os exames) ----
+    val remotaDeFinal = emparellamento.entries.associate { it.value to it.key } // índice final -> índice remoto
+    for (fi in finais.indices) {
+        val col = finais[fi]
+        var orixinal = -1
+        if (fi < nLocais) {
+            val colLocal = l.columnas[vivasOrixe[fi]]
+            val li = indiceExameOrixinal(l.columnas, colLocal.columna_orixinal_uid, colLocal.columna_orixinal)
+            orixinal = if (li >= 0) novoIndiceLocal[li] ?: -1 else -1
         }
-        if (orixinal != col.columna_orixinal) finais[idx] = col.copy(columna_orixinal = orixinal)
+        val ri = remotaDeFinal[fi]
+        if (ri != null && ri in ganaronRemotas) {
+            val rc = r.columnas[ri]
+            val rIdx = indiceExameOrixinal(r.columnas, rc.columna_orixinal_uid, rc.columna_orixinal)
+            val fIdx = if (rIdx >= 0) emparellamento[rIdx] else null
+            if (fIdx != null) orixinal = fIdx
+        }
+        if (col.tipo == "recuperacion" && orixinal >= 0) {
+            finais[fi] = col.copy(columna_orixinal = finais[orixinal].nome, columna_orixinal_uid = finais[orixinal].uid)
+        }
     }
 
-    val columnaPorNome = finais.associateBy { it.nome }
+    // ---- 5. Notas: a columna de cada unha resólvese polo uid (sen uid, polo nome); a chave é (alumno, índice final) ----
+    val notas = LinkedHashMap<Pair<String, Int>, SnapshotNota>()
+    val elixidas = HashMap<Pair<String, Int>, Int?>() // índice final da recuperación elixida (null = ningunha)
 
-    // ---- Notas ----
-    val notas = LinkedHashMap<Pair<String, String>, SnapshotNota>()
-    for (n in notasLocais) {
-        val nomeFinal = nomeLocalAFinal[n.columna] ?: n.columna
-        val elixida = n.columna_recuperacion_elixida?.let { nomeLocalAFinal[it] ?: it }
-        notas[n.alumno to nomeFinal] = n.copy(columna = nomeFinal, columna_recuperacion_elixida = elixida)
+    l.notas.forEach { n ->
+        val li = n.indiceColumna(l.columnas)
+        if (li < 0) return@forEach
+        val fi = novoIndiceLocal[li] ?: return@forEach // columna borrada por unha lápida que casou
+        val chave = n.alumno to fi
+        notas[chave] = n
+        val ei = indiceRecuperacionElixida(l.columnas, n.columna_recuperacion_elixida_uid, n.columna_recuperacion_elixida)
+        elixidas[chave] = if (ei >= 0) novoIndiceLocal[ei] else null
     }
 
-    for (n in r.notas) {
-        val nomeFinal = remotoAFinal[n.columna] ?: continue
-        val columna = columnaPorNome[nomeFinal] ?: continue
-        val chave = n.alumno to nomeFinal
+    r.notas.forEach { n ->
+        val ri = n.indiceColumna(r.columnas)
+        if (ri < 0) return@forEach
+        val fi = emparellamento[ri] ?: return@forEach // columna non creada (lápida posterior)
+        val columna = finais[fi]
+        val chave = n.alumno to fi
         val existente = notas[chave]
         val conAcertos = n.acertos_listening != null || n.acertos_reading != null || n.acertos_speaking != null
-        notas[chave] = if (columna.tipo == "destrezas" && !columna.palabras.isNullOrEmpty() && conAcertos) {
-            fusionarNotaDestreza(columna, existente, n)
+
+        if (columna.tipo == "destrezas" && !columna.palabras.isNullOrEmpty() && conAcertos) {
+            notas[chave] = fusionarNotaDestreza(columna, existente, n)
+            elixidas.putIfAbsent(chave, null)
         } else {
-            fusionarNotaSimple(nomeFinal, existente, n, remotoAFinal)
+            val ei = indiceRecuperacionElixida(r.columnas, n.columna_recuperacion_elixida_uid, n.columna_recuperacion_elixida)
+            val elixidaRemota = if (ei >= 0) emparellamento[ei] else null
+            val (nova, elixida) = fusionarNotaSimple(existente, elixidas[chave], n, elixidaRemota)
+            notas[chave] = nova
+            elixidas[chave] = elixida
         }
     }
 
-    // Se a ponderación Listening/Reading/Speaking cambiou (gañou a remota),
-    // recalcular TODAS as notas desa columna, tamén as que non veñen no snapshot.
-    for (nomeCol in pctCambiadas) {
-        val columna = columnaPorNome[nomeCol] ?: continue
+    // Se a ponderación Listening/Reading/Speaking cambiou (gañou a remota), recalcular TODAS as
+    // notas desa columna, tamén as que non veñen no snapshot.
+    for (fi in pctCambiadas) {
+        val columna = finais[fi]
         for ((chave, nota) in notas.toList()) {
-            if (chave.second != nomeCol) continue
+            if (chave.second != fi) continue
             if (nota.acertos_listening == null && nota.acertos_reading == null && nota.acertos_speaking == null) continue
             notas[chave] = nota.copy(
                 valor = valorDestreza(columna, nota.acertos_listening.orEmpty(), nota.acertos_reading.orEmpty(), nota.acertos_speaking.orEmpty()),
@@ -257,10 +309,20 @@ private fun fusionarTrimestre(
         }
     }
 
+    // Saída: cada nota leva o nome E o uid da súa columna (e da recuperación elixida) finais.
+    val notasFinais = notas.map { (chave, nota) ->
+        val columna = finais[chave.second]
+        val elixida = elixidas[chave]?.let { finais.getOrNull(it) }
+        nota.copy(
+            columna = columna.nome, columna_uid = columna.uid,
+            columna_recuperacion_elixida = elixida?.nome, columna_recuperacion_elixida_uid = elixida?.uid
+        )
+    }
+
     return SnapshotTrimestre(
         ponderacion = fusionarPonderacion(l.ponderacion, r.ponderacion),
         columnas = finais,
-        notas = notas.values.toList(),
+        notas = notasFinais,
         actitude = fusionarActitude(l.actitude, r.actitude),
         xade = fusionarXade(l.xade, r.xade)
     )
@@ -276,21 +338,20 @@ private fun fusionarPonderacion(l: SnapshotPonderacion?, r: SnapshotPonderacion?
 
 // ==================== notas ====================
 
+/** Fusiona unha nota simple. `elixidaLocal`/`elixidaRemota` son os ÍNDICES FINAIS da recuperación
+ * elixida (non nomes). Devolve a nota e o índice da recuperación elixida que queda. */
 private fun fusionarNotaSimple(
-    nomeColumna: String, existente: SnapshotNota?, n: SnapshotNota, remotoAFinal: Map<String, String>
-): SnapshotNota {
-    val elixidaFinal = n.columna_recuperacion_elixida?.let { remotoAFinal[it] }
-    val remota = listOf(n.valor, n.es_recuperacion, n.criterio_recuperacion, elixidaFinal)
-    if (existente == null) {
-        return n.copy(columna = nomeColumna, columna_recuperacion_elixida = elixidaFinal)
-    }
-    val local = listOf(existente.valor, existente.es_recuperacion, existente.criterio_recuperacion, existente.columna_recuperacion_elixida)
+    existente: SnapshotNota?, elixidaLocal: Int?, n: SnapshotNota, elixidaRemota: Int?
+): Pair<SnapshotNota, Int?> {
+    if (existente == null) return n to elixidaRemota
+    val local = listOf(existente.valor, existente.es_recuperacion, existente.criterio_recuperacion, elixidaLocal)
+    val remota = listOf(n.valor, n.es_recuperacion, n.criterio_recuperacion, elixidaRemota)
     return if (remotoGana(local, existente.modificado_en, remota, n.modificado_en)) {
         existente.copy(
             valor = n.valor, es_recuperacion = n.es_recuperacion, criterio_recuperacion = n.criterio_recuperacion,
-            columna_recuperacion_elixida = elixidaFinal, modificado_en = n.modificado_en
-        )
-    } else existente
+            modificado_en = n.modificado_en
+        ) to elixidaRemota
+    } else existente to elixidaLocal
 }
 
 private fun valorDestreza(columna: SnapshotColumna, listening: List<String>, reading: List<String>, speaking: List<String>): Double? =

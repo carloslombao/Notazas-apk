@@ -25,7 +25,7 @@ fun palabrasDeColumna(columna: SnapshotColumna): List<PalabraOffline> =
 /** Para reutilizar DestrezasScreen.kt sen cambios: constrúe o MESMO
  * tipo que usa o modo en liña a partir do snapshot. */
 fun SnapshotColumna.comoColumnaOut(asignacionId: Int): ColumnaOut = ColumnaOut(
-    id = nome.hashCode(),
+    id = idColumnaOffline(this),
     asignacion_id = asignacionId,
     trimestre_id = 0,
     tipo = tipo,
@@ -81,24 +81,26 @@ fun crearProbaDestrezasOffline(
     )
 }
 
-/** alumnoId sintético -> nota /10 nesa proba (null = sen avaliar). */
-fun lerNotasDestrezasOffline(entrada: CacheAsignacionEntrada, trimestreNome: String, columnaNome: String): Map<Int, Double?> {
+/** alumnoId sintético -> nota /10 nesa proba (null = sen avaliar). A proba identíficase polo seu id
+ * (derivado do uid), non polo nome. */
+fun lerNotasDestrezasOffline(entrada: CacheAsignacionEntrada, trimestreNome: String, columnaId: Int): Map<Int, Double?> {
     val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: return emptyMap()
-    val notasPorAlumno = trimestre.notas.filter { it.columna == columnaNome }.associateBy { it.alumno }
+    val columna = trimestre.columnas.firstOrNull { it.tipo == "destrezas" && idColumnaOffline(it) == columnaId }
+        ?: return emptyMap()
     return entrada.snapshot.alumnado.associate { a ->
-        idAlumnoOffline(a.nome, a.apelidos) to notasPorAlumno[claveAlumno(a.nome, a.apelidos)]?.valor
+        idAlumnoOffline(a.nome, a.apelidos) to trimestre.notaDe(claveAlumno(a.nome, a.apelidos), columna)?.valor
     }
 }
 
 /** (idsListening, idsReading, idsSpeaking) xa marcados para ese alumno nesa proba. */
 fun lerAcertosOffline(
-    entrada: CacheAsignacionEntrada, trimestreNome: String, columnaNome: String,
+    entrada: CacheAsignacionEntrada, trimestreNome: String, columnaId: Int,
     alumnoNome: String, alumnoApelidos: String
 ): Triple<Set<Int>, Set<Int>, Set<Int>> {
-    val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: return Triple(emptySet(), emptySet(), emptySet())
-    val clave = claveAlumno(alumnoNome, alumnoApelidos)
-    val nota = trimestre.notas.firstOrNull { it.alumno == clave && it.columna == columnaNome }
-        ?: return Triple(emptySet(), emptySet(), emptySet())
+    val baleiro = Triple(emptySet<Int>(), emptySet<Int>(), emptySet<Int>())
+    val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: return baleiro
+    val columna = trimestre.columnas.firstOrNull { it.tipo == "destrezas" && idColumnaOffline(it) == columnaId } ?: return baleiro
+    val nota = trimestre.notaDe(claveAlumno(alumnoNome, alumnoApelidos), columna) ?: return baleiro
     return Triple(
         nota.acertos_listening.orEmpty().map { idPalabraOffline(it) }.toSet(),
         nota.acertos_reading.orEmpty().map { idPalabraOffline(it) }.toSet(),
@@ -110,7 +112,7 @@ fun lerAcertosOffline(
 fun gardarDestrezaOffline(
     entrada: CacheAsignacionEntrada,
     trimestreNome: String,
-    columnaNome: String,
+    columnaId: Int,
     alumnoNome: String,
     alumnoApelidos: String,
     idsListening: Set<Int>,
@@ -118,7 +120,7 @@ fun gardarDestrezaOffline(
     idsSpeaking: Set<Int>
 ): Pair<CacheAsignacionEntrada, Double?> {
     val trimestreActual = entrada.snapshot.trimestres[trimestreNome] ?: SnapshotTrimestre()
-    val columna = trimestreActual.columnas.firstOrNull { it.nome == columnaNome && it.tipo == "destrezas" }
+    val columna = trimestreActual.columnas.firstOrNull { it.tipo == "destrezas" && idColumnaOffline(it) == columnaId }
         ?: return entrada to null
     val textoPorId = palabrasDeColumna(columna).associate { it.id to it.texto }
     val textosListening = idsListening.mapNotNull { textoPorId[it] }
@@ -130,7 +132,7 @@ fun gardarDestrezaOffline(
     )
 
     val clave = claveAlumno(alumnoNome, alumnoApelidos)
-    val existente = trimestreActual.notas.firstOrNull { it.alumno == clave && it.columna == columnaNome }
+    val existente = trimestreActual.notaDe(clave, columna)
     val ahora = horaIsoUtcEstiloPython()
 
     // v2: cada palabra leva a data do seu último cambio de estado (marcada ou desmarcada),
@@ -152,14 +154,15 @@ fun gardarDestrezaOffline(
         "speaking" to marcas("speaking", existente?.acertos_speaking, textosSpeaking)
     )
 
-    val novaNota = (existente ?: SnapshotNota(alumno = clave, columna = columnaNome)).copy(
+    val novaNota = (existente ?: SnapshotNota(alumno = clave, columna = columna.nome)).copy(
+        columna = columna.nome, columna_uid = columna.uid,
         valor = valor,
         acertos_listening = textosListening, acertos_reading = textosReading, acertos_speaking = textosSpeaking,
         acertos_t = marcasNovas,
         // Se non cambiou ningunha palabra non se toca a data da nota (non gaña a ninguén por premer Gardar).
         modificado_en = if (algoCambiou || existente == null) ahora else existente.modificado_en
     )
-    val notasSenEsta = trimestreActual.notas.filterNot { it.alumno == clave && it.columna == columnaNome }
+    val notasSenEsta = trimestreActual.notasSenEsta(clave, columna)
     val trimestreNovo = trimestreActual.copy(notas = notasSenEsta + novaNota)
     val entradaNova = entrada.copy(
         snapshot = entrada.snapshot.copy(

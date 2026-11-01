@@ -25,6 +25,8 @@ data class SnapshotColumna(
     // v2: identidade estable da columna (sobrevive a cambios de nome) e data do último cambio.
     val uid: String? = null,
     val modificado_en: String? = null,
+    // v2.1: uid da columna orixinal (nas recuperacións). Usalo ANTES ca `columna_orixinal` (nome).
+    val columna_orixinal_uid: String? = null,
     // Só cando tipo=="destrezas":
     val palabras: List<String>? = null,
     val pct_listening: Double? = null,
@@ -36,6 +38,10 @@ data class SnapshotColumna(
 data class SnapshotNota(
     val alumno: String,
     val columna: String,
+    // v2.1: uid da columna da nota e da recuperación elixida. Se vén, a columna búscase
+    // SÓ polo uid (o nome non é único: pode haber un exame "U1" e un traballo "U1").
+    val columna_uid: String? = null,
+    val columna_recuperacion_elixida_uid: String? = null,
     val valor: Double? = null,
     val es_recuperacion: Boolean = false,
     val criterio_recuperacion: String? = null,
@@ -88,12 +94,14 @@ data class SnapshotAlumnoBase(
     val data_nacemento: String? = null
 )
 
-/** Lápida dunha columna eliminada (v2). */
+/** Lápida dunha columna eliminada (v2). Casa cunha columna SÓ polo `uid` se ambas o teñen;
+ * sen uid nun dos lados, por trimestre + nome + `tipo` (e só se a lápida ten `tipo`). */
 @Serializable
 data class SnapshotBorrado(
     val uid: String? = null,
     val trimestre: String,
     val nome: String,
+    val tipo: String? = null,
     val t: String
 )
 

@@ -24,6 +24,7 @@ import com.notazas.mobil.datos.offline.crearProbaDestrezasOffline
 import com.notazas.mobil.datos.offline.gardarDestrezaOffline
 import com.notazas.mobil.datos.offline.gardarLocalPendente
 import com.notazas.mobil.datos.offline.horaActualCurta
+import com.notazas.mobil.datos.offline.idColumnaOffline
 import com.notazas.mobil.datos.offline.lerAcertosOffline
 import com.notazas.mobil.datos.offline.lerNotasDestrezasOffline
 import com.notazas.mobil.datos.rede.ApiClient
@@ -181,7 +182,7 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         val trimestreNome = estado.trimestreSeleccionado?.nome ?: return
-        estado = estado.copy(notas = lerNotasDestrezasOffline(entrada, trimestreNome, columna.nome), cargandoNotas = false)
+        estado = estado.copy(notas = lerNotasDestrezasOffline(entrada, trimestreNome, columna.id), cargandoNotas = false)
     }
 
     // ---------- Comúns ----------
@@ -370,7 +371,7 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
             val entradaNova = crearProbaDestrezasOffline(entrada, trimestreNome, nome.trim(), data, palabras, pctListening, pctReading, pctSpeaking)
             gardarLocalPendente(getApplication(), entradaNova)
             entradaOfflineActual = entradaNova
-            val novaColumnaId = entradaNova.columnasDestrezas(trimestreNome).lastOrNull { it.nome == nome.trim() }?.nome?.hashCode()
+            val novaColumnaId = entradaNova.columnasDestrezas(trimestreNome).lastOrNull { it.nome == nome.trim() }?.let { idColumnaOffline(it) }
             estado = estado.copy(mostrarNova = false, gardandoNova = false, erroNova = null)
             recargarColumnasOffline(asignacion, listOf(entradaNova), novaColumnaId)
         }
@@ -414,7 +415,7 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
         val trimestreNome = estado.trimestreSeleccionado?.nome ?: return
         val alumno = estado.alumnos[indice]
         val (apelidos, nome) = separarNomeCompleto(alumno.nome_completo)
-        val (idsListening, idsReading, idsSpeaking) = lerAcertosOffline(entrada, trimestreNome, columna.nome, nome, apelidos)
+        val (idsListening, idsReading, idsSpeaking) = lerAcertosOffline(entrada, trimestreNome, columna.id, nome, apelidos)
         val verdes = buildSet {
             idsListening.forEach { add(Destreza.LISTENING to it) }
             idsReading.forEach { add(Destreza.READING to it) }
@@ -527,7 +528,7 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
         estado = estado.copy(gardando = true, erroGardar = null)
         viewModelScope.launch {
             val (entradaNova, valor) = gardarDestrezaOffline(
-                entrada = entrada, trimestreNome = trimestreNome, columnaNome = columna.nome,
+                entrada = entrada, trimestreNome = trimestreNome, columnaId = columna.id,
                 alumnoNome = nome, alumnoApelidos = apelidos,
                 idsListening = folla.verdes.filter { it.first == Destreza.LISTENING }.map { it.second }.toSet(),
                 idsReading = folla.verdes.filter { it.first == Destreza.READING }.map { it.second }.toSet(),

@@ -3,6 +3,8 @@ package com.notazas.mobil.datos.offline
 import android.content.Context
 import android.util.Log
 import com.notazas.mobil.datos.local.CredenciaisRemotas
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -44,7 +46,7 @@ data class ResultadoSincronizacion(
  * perde nada, só queda sen subir un pouco máis). */
 /** Sincroniza con BoxAbalar só as asignacións con cambios sen subir. */
 suspend fun sincronizarPendentes(contexto: Context): ResultadoSincronizacion =
-    sincronizarAsignacions(contexto, soPendentes = true)
+    withContext(Dispatchers.Default) { sincronizarAsignacions(contexto, soPendentes = true) }
 
 /** Sincroniza con BoxAbalar TODAS as asignacións da caché (tamén as que non
  * teñen cambios locais, para traer os cambios feitos desde outros
@@ -52,7 +54,7 @@ suspend fun sincronizarPendentes(contexto: Context): ResultadoSincronizacion =
  * con datos móbiles, con wifi allea ou coa wifi do colexio (non depende de
  * que o servidor do cole sexa alcanzable). */
 suspend fun sincronizarTodasConBoxAbalar(contexto: Context): ResultadoSincronizacion =
-    sincronizarAsignacions(contexto, soPendentes = false)
+    withContext(Dispatchers.Default) { sincronizarAsignacions(contexto, soPendentes = false) }
 
 /** As que fallen quedan marcadas para a próxima vez (non se perde nada). */
 private suspend fun sincronizarAsignacions(contexto: Context, soPendentes: Boolean): ResultadoSincronizacion {

@@ -32,7 +32,7 @@ import com.notazas.mobil.datos.offline.gardarNotaOffline
 import com.notazas.mobil.datos.offline.lerAcertosOffline
 import com.notazas.mobil.datos.offline.columnaOfflinePorId
 import com.notazas.mobil.datos.offline.etiquetaDatosOffline
-import com.notazas.mobil.datos.offline.prepararParaForaDoColexio
+import com.notazas.mobil.datos.offline.refrescarCacheSeFaiFalta
 import com.notazas.mobil.datos.offline.notaDestrezaPalabras
 import com.notazas.mobil.datos.rede.ApiClient
 import com.notazas.mobil.datos.util.gardarEAbrirPdf
@@ -40,6 +40,7 @@ import com.notazas.mobil.datos.util.ordenadosPorNome
 import com.notazas.mobil.ui.screens.destrezas.Destreza
 import com.notazas.mobil.ui.screens.destrezas.FollaDestrezas
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -122,10 +123,9 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
                 )
 
                 if (asignacionPorDefecto != null && trimestrePorDefecto != null) {
-                    // Mantén fresca a caché do modo sen conexión cada vez que se abre o
-                    // Caderno con servidor (se se crean probas despois de abrir a app,
-                    // sen isto sen wifi non aparecerían). Non pisa o que estea pendente.
-                    launch { prepararParaForaDoColexio(getApplication()) }
+                    // Mantén fresca a caché do modo sen conexión, pero SEN repetilo en cada apertura do
+                    // Caderno (a app xa o fai ao arrancar): só se pasaron máis de 10 min, e en segundo plano.
+                    launch(Dispatchers.Default) { refrescarCacheSeFaiFalta(getApplication()) }
                     cargarGradebook(asignacionPorDefecto, trimestrePorDefecto)
                 } else {
                     estado = estado.copy(cargando = false)

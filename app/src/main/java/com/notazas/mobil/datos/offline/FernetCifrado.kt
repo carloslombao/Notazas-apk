@@ -34,10 +34,18 @@ object FernetCifrado {
     }
 
     /** (signingKey, encryptionKey) — Fernet reparte os 32 bytes da
-     * clave derivada en dous anacos de 16. */
-    private fun claves(pasafrase: String): Pair<ByteArray, ByteArray> {
-        val clave32 = derivarClave32(pasafrase)
-        return clave32.copyOfRange(0, 16) to clave32.copyOfRange(16, 32)
+     * clave derivada en dous anacos de 16.
+     *
+     * O PBKDF2 de 480 000 iteracións tarda ~0,5-2 s nun móbil: antes facíase en CADA cifrar/
+     * descifrar (dúas veces por materia ao sincronizar, no fío principal), o que conxelaba a
+     * app. Agora derívase UNHA vez por contrasinal e resérvase en memoria. */
+    private val clavesDerivadas = HashMap<String, Pair<ByteArray, ByteArray>>()
+
+    private fun claves(pasafrase: String): Pair<ByteArray, ByteArray> = synchronized(clavesDerivadas) {
+        clavesDerivadas.getOrPut(pasafrase) {
+            val clave32 = derivarClave32(pasafrase)
+            clave32.copyOfRange(0, 16) to clave32.copyOfRange(16, 32)
+        }
     }
 
     fun descifrar(tokenFernet: String, pasafrase: String): String {

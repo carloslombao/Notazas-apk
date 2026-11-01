@@ -14,6 +14,7 @@ import com.notazas.mobil.datos.offline.actualizarCacheOffline
 import com.notazas.mobil.datos.offline.sincronizarPendentes
 import com.notazas.mobil.ui.navigation.NotazasApp
 import com.notazas.mobil.ui.theme.NotazasTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 // FragmentActivity (non ComponentActivity) porque BiometricPrompt
@@ -27,7 +28,9 @@ class MainActivity : FragmentActivity() {
         // pechouse, petou, ou non había conexión), téntase subir xa ao
         // abrir a app. Mellor esforzo: se non hai conexión agora tampouco,
         // simplemente queda pendente para a seguinte vez.
-        lifecycleScope.launch {
+        // Dispatchers.Default: a sincronización e o refresco da caché (cifrado, JSON, rede) NON
+        // deben correr no fío principal: bloquearíano os primeiros segundos da app.
+        lifecycleScope.launch(Dispatchers.Default) {
             // Avisos de aniversario: asegura a alarma diaria (por se o sistema a perdeu).
             try {
                 PlanificadorCumpleanos.reprogramar(applicationContext)

@@ -27,8 +27,15 @@ object CacheOffline {
     private fun cartafol(contexto: Context): File =
         File(contexto.filesDir, "cache_offline").apply { mkdirs() }
 
-    private fun masterKey(contexto: Context) =
-        MasterKey.Builder(contexto).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
+    // A MasterKey (acceso ao Android Keystore) constrúe-se UNHA vez: antes facíase en cada lectura
+    // e escritura de cada ficheiro.
+    @Volatile private var chaveMestra: MasterKey? = null
+
+    private fun masterKey(contexto: Context): MasterKey =
+        chaveMestra ?: synchronized(this) {
+            chaveMestra ?: MasterKey.Builder(contexto.applicationContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build().also { chaveMestra = it }
+        }
 
     private fun ficheiroCifrado(contexto: Context, nome: String): EncryptedFile {
         val ficheiro = File(cartafol(contexto), nome)
@@ -59,14 +66,17 @@ object CacheOffline {
 
     private fun nomeFicheiroAsignacion(asignacionId: Int) = "asignacion_$asignacionId.json"
 
-    suspend fun gardarAsignacion(contexto: Context, entrada: CacheAsignacionEntrada) {
+    // O JSON dos snapshots pode ser grande: codifícase/decodifícase DENTRO de withContext(IO),
+    // nunca no fío que chama (que a miúdo é o principal).
+    suspend fun gardarAsignacion(contexto: Context, entrada: CacheAsignacionEntrada) = withContext(Dispatchers.IO) {
         escribir(contexto, nomeFicheiroAsignacion(entrada.asignacion_id), json.encodeToString(CacheAsignacionEntrada.serializer(), entrada))
     }
 
-    suspend fun lerAsignacion(contexto: Context, asignacionId: Int): CacheAsignacionEntrada? =
+    suspend fun lerAsignacion(contexto: Context, asignacionId: Int): CacheAsignacionEntrada? = withContext(Dispatchers.IO) {
         ler(contexto, nomeFicheiroAsignacion(asignacionId))?.let {
             runCatching { json.decodeFromString(CacheAsignacionEntrada.serializer(), it) }.getOrNull()
         }
+    }
 
     suspend fun listarAsignacionsCacheadas(contexto: Context): List<CacheAsignacionEntrada> = withContext(Dispatchers.IO) {
         cartafol(contexto).listFiles { f -> f.name.startsWith("asignacion_") && f.name.endsWith(".json") }
@@ -81,14 +91,15 @@ object CacheOffline {
 
     private const val FICHEIRO_CENTRO = "centro.json"
 
-    suspend fun gardarCentro(contexto: Context, resposta: CacheCentroResposta) {
+    suspend fun gardarCentro(contexto: Context, resposta: CacheCentroResposta) = withContext(Dispatchers.IO) {
         escribir(contexto, FICHEIRO_CENTRO, json.encodeToString(CacheCentroResposta.serializer(), resposta))
     }
 
-    suspend fun lerCentro(contexto: Context): CacheCentroResposta? =
+    suspend fun lerCentro(contexto: Context): CacheCentroResposta? = withContext(Dispatchers.IO) {
         ler(contexto, FICHEIRO_CENTRO)?.let {
             runCatching { json.decodeFromString(CacheCentroResposta.serializer(), it) }.getOrNull()
         }
+    }
 
     /** Data da última vez que se preparou a caché (a do centro.json,
      * que sempre se garda xunto coas asignacións). Null se nunca se

@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.notazas.mobil.datos.local.CredenciaisRemotas
 import com.notazas.mobil.datos.rede.ApiClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 private const val TAG = "SincronizacionOffline"
@@ -22,7 +24,24 @@ data class ResultadoSincronizacionTotal(val mensaxe: String, val todoOk: Boolean
  *      coa súa base de datos (POST /nextcloud/sync), e logo refréscase a
  *      caché offline co que ten o servidor. Se non se chega, non é un erro.
  */
-suspend fun sincronizarTodo(contexto: Context): ResultadoSincronizacionTotal {
+suspend fun sincronizarTodo(contexto: Context): ResultadoSincronizacionTotal =
+    withContext(Dispatchers.Default) { sincronizarTodoInterno(contexto) }
+
+@Volatile private var ultimoRefrescoCacheMs = System.currentTimeMillis()
+
+/**
+ * Refresca a caché offline co servidor SEN repetilo en cada apertura dunha pantalla: descargar e
+ * cifrar todos os snapshots é caro (rede, JSON grande, cifrado en disco). A app xa o fai ao
+ * arrancar (MainActivity), polo que só se volve facer se pasaron `minutos` desde o último refresco.
+ */
+suspend fun refrescarCacheSeFaiFalta(contexto: Context, minutos: Long = 10) {
+    val agora = System.currentTimeMillis()
+    if (agora - ultimoRefrescoCacheMs < minutos * 60_000) return
+    ultimoRefrescoCacheMs = agora
+    withContext(Dispatchers.Default) { prepararParaForaDoColexio(contexto) }
+}
+
+private suspend fun sincronizarTodoInterno(contexto: Context): ResultadoSincronizacionTotal {
     val partes = mutableListOf<String>()
     var todoOk = true
 

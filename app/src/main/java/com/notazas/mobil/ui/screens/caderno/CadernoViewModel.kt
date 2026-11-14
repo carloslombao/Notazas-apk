@@ -1,7 +1,7 @@
 package com.notazas.mobil.ui.screens.caderno
 
 import android.app.Application
-import android.content.Intent
+import java.io.File
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,7 +21,7 @@ import com.notazas.mobil.datos.offline.ASPECTOS_POR_DEFECTO
 import com.notazas.mobil.datos.offline.CacheAsignacionEntrada
 import com.notazas.mobil.datos.offline.CacheOffline
 import com.notazas.mobil.datos.offline.TRIMESTRES_OFFLINE
-import com.notazas.mobil.datos.offline.actitudeAlumnoOffline
+import com.notazas.mobil.datos.offline.actitudeAlumnoOfflineGrupo
 import com.notazas.mobil.datos.offline.alumnoOfflinePorId
 import com.notazas.mobil.datos.offline.comoAsignacion
 import com.notazas.mobil.datos.offline.construirCadernoOffline
@@ -35,7 +35,7 @@ import com.notazas.mobil.datos.offline.etiquetaDatosOffline
 import com.notazas.mobil.datos.offline.refrescarCacheSeFaiFalta
 import com.notazas.mobil.datos.offline.notaDestrezaPalabras
 import com.notazas.mobil.datos.rede.ApiClient
-import com.notazas.mobil.datos.util.gardarEAbrirPdf
+import com.notazas.mobil.datos.util.descargarPdfACache
 import com.notazas.mobil.datos.util.ordenadosPorNome
 import com.notazas.mobil.ui.screens.destrezas.Destreza
 import com.notazas.mobil.ui.screens.destrezas.FollaDestrezas
@@ -44,6 +44,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import retrofit2.HttpException
 
 /** Extras do alumno aberto no Caderno: ficheiros (PDF dos exames, fotos
@@ -97,6 +98,29 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
 
     // Só en modo offline.
     private var entradasOffline: List<CacheAsignacionEntrada> = emptyList()
+
+    /**
+     * Relé a asignación DO DISCO (e actualiza a copia en memória). A caché cambia mentres este
+     * ViewModel está vivo: as pantallas de Actitude e Destrezas gardan nela, ou o refresco de
+     * arranque remata despois de que o Caderno cargase. Usar só `entradasOffline` amosaba datos
+     * vellos (as destrezas novas e as semanas de actitude recentes non aparecían ata reiniciar a app).
+     */
+    private suspend fun entradaFresca(asignacionId: Int): CacheAsignacionEntrada? {
+        val doDisco = CacheOffline.lerAsignacion(getApplication(), asignacionId)
+            ?: return entradasOffline.firstOrNull { it.asignacion_id == asignacionId }
+        entradasOffline = if (entradasOffline.any { it.asignacion_id == asignacionId }) {
+            entradasOffline.map { if (it.asignacion_id == asignacionId) doDisco else it }
+        } else entradasOffline + doDisco
+        return doDisco
+    }
+
+    /** Ao volver a esta pantalla: se estamos sen conexión, recarga os datos do disco. */
+    fun recargarSeOffline() {
+        if (!estado.modoFoiraDeLina || estado.cargando) return
+        val asignacion = estado.asignacionSeleccionada ?: return
+        val trimestre = estado.trimestreSeleccionado ?: return
+        viewModelScope.launch { aplicarOffline(asignacion, trimestre) }
+    }
 
     init {
         cargarInicial()
@@ -167,13 +191,17 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         aplicarOffline(asignacion, trimestre)
     }
 
-    private fun aplicarOffline(asignacion: Asignacion, trimestre: Trimestre) {
-        val entrada = entradasOffline.firstOrNull { it.asignacion_id == asignacion.id }
+    private suspend fun aplicarOffline(asignacion: Asignacion, trimestre: Trimestre) {
+        val entrada = entradaFresca(asignacion.id)
         if (entrada == null) {
             estado = estado.copy(cargando = false, erro = "Non se atopan datos preparados para esta materia.")
             return
         }
-        val datos = construirCadernoOffline(entrada, trimestre.nome)
+        // Copias DO DISCO das outras materias do mesmo grupo (a actitude é compartida entre elas).
+        val outras = entradasOffline
+            .filter { it.asignacion_id != asignacion.id && it.comoAsignacion().grupo_id == asignacion.grupo_id }
+            .mapNotNull { entradaFresca(it.asignacion_id) }
+        val datos = withContext(Dispatchers.Default) { construirCadernoOffline(entrada, trimestre.nome, outras) }
         estado = estado.copy(
             cargando = false, erro = null, datosDe = etiquetaDatosOffline(entrada.snapshot.modificado_en),
             columnas = datos.columnas, ponderacion = datos.ponderacion, filas = datos.filas
@@ -199,7 +227,11 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun recargar(asignacion: Asignacion, trimestre: Trimestre) {
-        if (estado.modoFoiraDeLina) aplicarOffline(asignacion, trimestre) else cargarGradebook(asignacion, trimestre)
+        if (estado.modoFoiraDeLina) {
+            viewModelScope.launch { aplicarOffline(asignacion, trimestre) }
+        } else {
+            cargarGradebook(asignacion, trimestre)
+        }
     }
 
     private fun cargarGradebook(asignacion: Asignacion, trimestre: Trimestre, silencioso: Boolean = false) {
@@ -235,7 +267,7 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 if (estado.modoFoiraDeLina) {
-                    val entrada = entradasOffline.first { it.asignacion_id == asignacion.id }
+                    val entrada = entradaFresca(asignacion.id) ?: error("Sen datos da materia")
                     val columna = columnaOfflinePorId(entrada, trimestre.nome, columnaId)
                     val alumno = alumnoOfflinePorId(entrada, alumnoId)
                     if (columna == null || alumno == null) {
@@ -278,7 +310,7 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 if (estado.modoFoiraDeLina) {
-                    val entrada = entradasOffline.first { it.asignacion_id == asignacion.id }
+                    val entrada = entradaFresca(asignacion.id) ?: error("Sen datos da materia")
                     val exame = columnaOfflinePorId(entrada, trimestre.nome, exameId)
                     val alumno = alumnoOfflinePorId(entrada, alumnoId)
                     if (exame == null || alumno == null) {
@@ -349,13 +381,18 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             val detalle = if (estado.modoFoiraDeLina) {
-                val entrada = entradasOffline.firstOrNull { it.asignacion_id == asignacion.id }
+                val entrada = entradaFresca(asignacion.id)
                 val alumno = entrada?.let { alumnoOfflinePorId(it, alumnoId) }
                 val aspectos = (CacheOffline.lerAspectos(getApplication()) ?: ASPECTOS_POR_DEFECTO).sortedBy { it.orde }
+                // A actitude é compartida entre as materias do grupo: súnese a de todas as copias.
+                val doGrupo = entradasOffline
+                    .filter { it.comoAsignacion().grupo_id == asignacion.grupo_id }
+                    .mapNotNull { entradaFresca(it.asignacion_id) }
+                    .ifEmpty { listOfNotNull(entrada) }
                 DetalleAlumnoCaderno(
                     alumnoId = alumnoId, cargando = false, aspectos = aspectos,
-                    semanasActitude = if (entrada != null && alumno != null) {
-                        actitudeAlumnoOffline(entrada, trimestre.nome, alumno, aspectos)
+                    semanasActitude = if (alumno != null) {
+                        actitudeAlumnoOfflineGrupo(doGrupo, trimestre.nome, alumno, aspectos)
                     } else emptyList()
                 )
             } else {
@@ -385,17 +422,17 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** Descarga o PDF escaneado dun exame e pídelle á vista que o abra
-     * cun visor externo (a app non ten visor de PDF propio). */
-    fun abrirPdfExame(ficheiroId: Int, onAbrir: (Intent) -> Unit) {
+    /** Descarga o PDF escaneado dun exame á caché e devolve o ficheiro para o visor de PDF da
+     * app (VisorPdf). Mentres descarga, `abrindoFicheiro` evita premer dobre. */
+    fun abrirPdfExame(ficheiroId: Int, onListo: (File) -> Unit) {
         if (estado.abrindoFicheiro) return
         estado = estado.copy(abrindoFicheiro = true)
         viewModelScope.launch {
             try {
                 val corpo = ApiClient.descargarFicheiro(ficheiroId)
-                val intent = gardarEAbrirPdf(getApplication(), corpo, "exame_$ficheiroId.pdf")
+                val ficheiro = descargarPdfACache(getApplication(), corpo, "exame_$ficheiroId.pdf")
                 estado = estado.copy(abrindoFicheiro = false)
-                onAbrir(intent)
+                onListo(ficheiro)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -422,10 +459,12 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         if (estado.modoFoiraDeLina) {
             val asignacion = estado.asignacionSeleccionada ?: return
             val trimestre = estado.trimestreSeleccionado ?: return
-            val entrada = entradasOffline.firstOrNull { it.asignacion_id == asignacion.id } ?: return
-            val alumno = alumnoOfflinePorId(entrada, alumnoId) ?: return
-            val (listening, reading, speaking) = lerAcertosOffline(entrada, trimestre.nome, columna.id, alumno.nome, alumno.apelidos)
-            mostrarFolla(columnaId, alumnoId, listening.toList(), reading.toList(), speaking.toList())
+            viewModelScope.launch {
+                val entrada = entradaFresca(asignacion.id) ?: return@launch
+                val alumno = alumnoOfflinePorId(entrada, alumnoId) ?: return@launch
+                val (listening, reading, speaking) = lerAcertosOffline(entrada, trimestre.nome, columna.id, alumno.nome, alumno.apelidos)
+                mostrarFolla(columnaId, alumnoId, listening.toList(), reading.toList(), speaking.toList())
+            }
             return
         }
 
@@ -495,7 +534,7 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 if (estado.modoFoiraDeLina) {
-                    val entrada = entradasOffline.first { it.asignacion_id == asignacion.id }
+                    val entrada = entradaFresca(asignacion.id) ?: error("Sen datos da materia")
                     val columna = estado.columnas.first { it.id == columnaId }
                     val alumno = alumnoOfflinePorId(entrada, folla.alumnoId) ?: error("Alumno non atopado")
                     val (nova, _) = gardarDestrezaOffline(

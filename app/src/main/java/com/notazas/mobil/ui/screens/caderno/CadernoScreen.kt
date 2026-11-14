@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +51,10 @@ fun CadernoScreen(
 ) {
     val estado = viewModel.estado
     val scopeDesglose = rememberCoroutineScope()
+
+    // Sen conexión, os datos vénse da caché do disco, que poden cambiar mentres a app está aberta
+    // (Actitude, Destrezas, o refresco de arranque): ao entrar neste Caderno volven ler.
+    LaunchedEffect(Unit) { viewModel.recargarSeOffline() }
     // Alumno cuxas notas (columna a columna) están abertas; null = lista da clase.
     var alumnoAberto by rememberSaveable { mutableStateOf<Int?>(null) }
     // Par (alumnoId, nome) do alumno cuxo desglose de TODAS as materias está aberto.

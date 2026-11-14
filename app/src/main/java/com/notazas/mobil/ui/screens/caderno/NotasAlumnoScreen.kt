@@ -55,6 +55,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -89,7 +90,9 @@ import com.notazas.mobil.datos.modelos.OpcionRecuperacion
 import com.notazas.mobil.datos.modelos.Trimestre
 import com.notazas.mobil.datos.modelos.mediaSobre10
 import com.notazas.mobil.datos.rede.ApiClient
+import com.notazas.mobil.datos.util.intentAbrirPdf
 import com.notazas.mobil.datos.util.xerarSemanasCurso
+import com.notazas.mobil.ui.componentes.VisorPdf
 import com.notazas.mobil.ui.screens.destrezas.FollaDestrezasSheet
 import com.notazas.mobil.ui.screens.destrezas.animarTransicions
 import com.notazas.mobil.ui.screens.perfilalumno.GraficoActitude
@@ -97,6 +100,7 @@ import com.notazas.mobil.ui.theme.ActitudeAmbar
 import com.notazas.mobil.ui.theme.ActitudeAmbarContainer
 import com.notazas.mobil.ui.theme.ExameAzul
 import com.notazas.mobil.ui.theme.TraballoMorado
+import java.io.File
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -166,6 +170,9 @@ private data class EdicionNota(
     val exameId: Int? = null
 )
 
+/** PDF aberto no visor da app: ficheiro descargado e o seu título. */
+private data class PdfAberto(val ficheiro: File, val titulo: String)
+
 // ---------- Pantalla ----------
 
 /** Notas dun alumno, columna a columna, na materia e trimestre
@@ -187,6 +194,7 @@ fun NotasAlumnoScreen(
     val contexto = LocalContext.current
     var edicion by remember { mutableStateOf<EdicionNota?>(null) }
     var fotosAbertas by remember { mutableStateOf<List<Int>?>(null) }
+    var pdfAberto by remember { mutableStateOf<PdfAberto?>(null) }
 
     // PDFs, fotos e actitude do alumno (cada vez que cambia alumno, materia ou trimestre).
     LaunchedEffect(alumnoId, estado.asignacionSeleccionada?.id, estado.trimestreSeleccionado?.id, estado.modoFoiraDeLina) {
@@ -218,22 +226,18 @@ fun NotasAlumnoScreen(
     val traballos = columnas.filter { it.tipo == "traballo" }
     val destrezas = columnas.filter { it.tipo == "destrezas" }
 
-    fun abrirPdf(ficheiro: Int?, semPdf: String) {
+    fun abrirPdf(ficheiro: Int?, semPdf: String, titulo: String) {
         when {
             estado.modoFoiraDeLina -> viewModel.mostrarAviso("O PDF do exame só se pode ver co servidor do colexio.")
             detalle == null || detalle.cargando -> viewModel.mostrarAviso("Cargando os ficheiros do alumno…")
             ficheiro == null -> viewModel.mostrarAviso(semPdf)
-            else -> viewModel.abrirPdfExame(ficheiro) { intent ->
-                try {
-                    contexto.startActivity(intent)
-                } catch (e: ActivityNotFoundException) {
-                    viewModel.mostrarAviso("Non hai ningunha app para abrir PDFs.")
-                }
-            }
+            // Descarga o PDF e móstrao no visor da propia app (VisorPdf).
+            else -> viewModel.abrirPdfExame(ficheiro) { arquivo -> pdfAberto = PdfAberto(arquivo, titulo) }
         }
     }
 
-    fun abrirExame(col: ColumnaOut) = abrirPdf(detalle?.pdfExame?.get(col.id), "Este exame non ten PDF subido.")
+    fun abrirExame(col: ColumnaOut) =
+        abrirPdf(detalle?.pdfExame?.get(col.id), "Este exame non ten PDF subido.", col.nome)
 
     fun abrirFotos(col: ColumnaOut) {
         val fotos = detalle?.fotos?.get(col.id).orEmpty()
@@ -312,7 +316,7 @@ fun NotasAlumnoScreen(
                     onEditarRecuperacion = { op ->
                         edicion = EdicionNota(op.columna_id, "${op.nome} (${col.nome})", alumnoId, esRecuperacion = true, exameId = col.id)
                     },
-                    onAbrirPdfRecuperacion = { op -> abrirPdf(op.ficheiro_id, "Esta recuperación non ten PDF subido.") },
+                    onAbrirPdfRecuperacion = { op -> abrirPdf(op.ficheiro_id, "Esta recuperación non ten PDF subido.", "${op.nome} (${col.nome})") },
                     onCriterio = { criterio, elixida -> viewModel.cambiarCriterio(col.id, alumnoId, criterio, elixida) }
                 )
             }
@@ -409,6 +413,35 @@ fun NotasAlumnoScreen(
 
     // ----- Fotos do traballo -----
     fotosAbertas?.let { ids -> VisorFotos(ids = ids, onPechar = { fotosAbertas = null }) }
+
+    // ----- PDF do exame, dentro da app -----
+    pdfAberto?.let { pdf ->
+        VisorPdf(
+            ficheiro = pdf.ficheiro,
+            titulo = pdf.titulo,
+            onPechar = { pdfAberto = null },
+            onAbrirFora = {
+                try {
+                    contexto.startActivity(intentAbrirPdf(contexto, pdf.ficheiro))
+                } catch (e: ActivityNotFoundException) {
+                    viewModel.mostrarAviso("Non hai ningunha app para abrir PDFs.")
+                }
+            }
+        )
+    }
+
+    // Mentres se descarga o PDF (pode tardar uns segundos): indicador para que non pareza que non responde.
+    if (estado.abrindoFicheiro) {
+        Dialog(onDismissRequest = {}) {
+            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Row(Modifier.padding(24.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 3.dp)
+                    Spacer(Modifier.width(16.dp))
+                    Text("Descargando o PDF…")
+                }
+            }
+        }
+    }
 }
 
 // ---------- Pezas ----------

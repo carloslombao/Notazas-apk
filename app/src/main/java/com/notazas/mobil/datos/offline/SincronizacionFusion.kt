@@ -424,7 +424,7 @@ private fun fusionarNotaDestreza(columna: SnapshotColumna, existente: SnapshotNo
 
 // ==================== actitude ====================
 
-private fun fusionarActitude(locais: List<SnapshotActitudeSemana>, remotas: List<SnapshotActitudeSemana>): List<SnapshotActitudeSemana> {
+internal fun fusionarActitude(locais: List<SnapshotActitudeSemana>, remotas: List<SnapshotActitudeSemana>): List<SnapshotActitudeSemana> {
     val mapa = LinkedHashMap<Pair<String, Int>, SnapshotActitudeSemana>()
     locais.forEach { mapa[it.alumno to it.semana] = it }
 

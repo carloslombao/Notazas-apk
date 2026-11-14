@@ -78,8 +78,20 @@ private fun mediaSemanaActitude(valores: Collection<Int>): Double? {
     return redondear2((valores.sum().toDouble() / valores.size / 5.0) * 10.0)
 }
 
-fun construirCadernoOffline(entrada: CacheAsignacionEntrada, trimestreNome: String): CadernoOfflineDatos {
+/**
+ * `outrasDoGrupo`: copias das OUTRAS materias do mesmo grupo. A actitude é do profesor e do alumno,
+ * non da materia, pero sen conexión a pantalla de Actitude só a garda na copia dunha materia;
+ * por iso se une a actitude de todas (a máis recente de cada semana) antes de calcular a nota.
+ */
+fun construirCadernoOffline(
+    entrada: CacheAsignacionEntrada,
+    trimestreNome: String,
+    outrasDoGrupo: List<CacheAsignacionEntrada> = emptyList()
+): CadernoOfflineDatos {
     val trimestre = entrada.snapshot.trimestres[trimestreNome] ?: SnapshotTrimestre()
+    val actitudeUnida = outrasDoGrupo.fold(trimestre.actitude) { acc, outra ->
+        fusionarActitude(acc, outra.snapshot.trimestres[trimestreNome]?.actitude.orEmpty())
+    }
     val todasColumnas = trimestre.columnas
     val columnasSnap = todasColumnas.filter { it.tipo in TIPOS_VISIBLES }
     val recuperacionsSnap = todasColumnas.filter { it.tipo == "recuperacion" }
@@ -136,7 +148,7 @@ fun construirCadernoOffline(entrada: CacheAsignacionEntrada, trimestreNome: Stri
                 .mapNotNull { notas[idColumnaOffline(it).toString()] }
                 .let { if (it.isEmpty()) null else it.average() }
         } else null
-        val mediaActitude = trimestre.actitude.filter { it.alumno == clave }
+        val mediaActitude = actitudeUnida.filter { it.alumno == clave }
             .mapNotNull { mediaSemanaActitude(it.valores.values) }
             .let { if (it.isEmpty()) null else it.average() }
 
@@ -195,6 +207,30 @@ fun actitudeAlumnoOffline(
                 }
             )
         }
+}
+
+/** Igual ca [actitudeAlumnoOffline], pero unindo a actitude de TODAS as copias do grupo (a máis
+ * recente de cada semana): sen conexión, unha semana gardada na pantalla de Actitude pode estar
+ * só na copia doutra materia do mesmo grupo. */
+fun actitudeAlumnoOfflineGrupo(
+    entradas: List<CacheAsignacionEntrada>, trimestreNome: String, alumno: SnapshotAlumnoBase,
+    aspectos: List<AspectoActitudeOut>
+): List<ActitudeSemanalOut> {
+    val clave = claveAlumno(alumno.nome, alumno.apelidos)
+    val idAlumno = idAlumnoOffline(alumno.nome, alumno.apelidos)
+    val aspectoPorNome = aspectos.associateBy { it.nome }
+    val unidas = entradas.fold(emptyList<SnapshotActitudeSemana>()) { acc, entrada ->
+        fusionarActitude(acc, entrada.snapshot.trimestres[trimestreNome]?.actitude.orEmpty().filter { it.alumno == clave })
+    }
+    return unidas.filter { it.alumno == clave }.sortedBy { it.semana }.map { s ->
+        ActitudeSemanalOut(
+            id = 0, alumno_id = idAlumno, trimestre_id = 0, semana = s.semana,
+            media = null, observacions = s.observacions,
+            detalles = s.valores.mapNotNull { (nome, valor) ->
+                aspectoPorNome[nome]?.let { DetalleActitudeOut(it.id, valor) }
+            }
+        )
+    }
 }
 
 fun alumnoOfflinePorId(entrada: CacheAsignacionEntrada, id: Int): SnapshotAlumnoBase? =

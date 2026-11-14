@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Icona monocroma (iconas temáticas de Android 13+): o sistema só usa a forma, así que a capa
+     do libro faise cunha única cor e as liñas e o lombo recórtanse (evenOdd) como ocos. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF000000"
+        android:fillType="evenOdd"
+        android:pathData="M36,26 h32 a4,4 0 0 1 4,4 v44 a4,4 0 0 1 -4,4 h-32 a4,4 0 0 1 -4,-4 v-44 a4,4 0 0 1 4,-4 z M48,38 h18 v3 h-18 z M48,46 h18 v3 h-18 z M48,54 h12 v3 h-12 z M41.5,26 h1.5 v52 h-1.5 z" />
+</vector>

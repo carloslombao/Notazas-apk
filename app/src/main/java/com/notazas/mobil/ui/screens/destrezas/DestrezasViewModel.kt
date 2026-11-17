@@ -13,6 +13,7 @@ import com.notazas.mobil.datos.modelos.ColumnaOut
 import com.notazas.mobil.datos.modelos.DestrezaPalabrasUpdate
 import com.notazas.mobil.datos.modelos.FilaAlumnoGradebook
 import com.notazas.mobil.datos.modelos.Trimestre
+import com.notazas.mobil.datos.local.SeleccionActual
 import com.notazas.mobil.datos.offline.CacheAsignacionEntrada
 import com.notazas.mobil.datos.offline.CacheOffline
 import com.notazas.mobil.datos.offline.TRIMESTRES_OFFLINE
@@ -101,13 +102,17 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
                 val trimestres = ApiClient.servizo.listarTrimestres()
                     .filter { it.orde <= 3 }
                     .sortedBy { it.orde }
+                // Por defecto, a última materia e trimestre elixidos (compartido co Caderno).
+                val guardada = SeleccionActual.asignacionId(getApplication())
+                val ordeGardada = SeleccionActual.trimestreOrde(getApplication())
                 estado = estado.copy(
                     modoFoiraDeLina = false,
                     cargando = false,
                     asignacions = propias,
-                    asignacionSeleccionada = propias.firstOrNull(),
+                    asignacionSeleccionada = propias.firstOrNull { it.id == guardada } ?: propias.firstOrNull(),
                     trimestres = trimestres,
-                    trimestreSeleccionado = trimestres.firstOrNull { it.activo } ?: trimestres.firstOrNull()
+                    trimestreSeleccionado = trimestres.firstOrNull { it.orde == ordeGardada }
+                        ?: trimestres.firstOrNull { it.activo } ?: trimestres.firstOrNull()
                 )
                 recargarColumnas()
             } catch (e: CancellationException) {
@@ -135,14 +140,16 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
         // compartidas entre materias do mesmo grupo): unha entrada por
         // asignación, sen deduplicar.
         val asignacions = entradas.map { it.comoAsignacion() }.ordenadosPorNome { it.grupo }
-        val asignacion = asignacions.firstOrNull()
+        val guardada = SeleccionActual.asignacionId(getApplication())
+        val asignacion = asignacions.firstOrNull { it.id == guardada } ?: asignacions.firstOrNull()
+        val ordeGardada = SeleccionActual.trimestreOrde(getApplication())
 
         estado = estado.copy(
             modoFoiraDeLina = true,
             asignacions = asignacions,
             asignacionSeleccionada = asignacion,
             trimestres = TRIMESTRES_OFFLINE,
-            trimestreSeleccionado = TRIMESTRES_OFFLINE.firstOrNull(),
+            trimestreSeleccionado = TRIMESTRES_OFFLINE.firstOrNull { it.orde == ordeGardada } ?: TRIMESTRES_OFFLINE.firstOrNull(),
             erro = null
         )
 
@@ -188,6 +195,7 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
     // ---------- Comúns ----------
 
     fun seleccionarAsignacion(asignacion: Asignacion) {
+        SeleccionActual.gardarAsignacion(getApplication(), asignacion.id)
         estado = estado.copy(asignacionSeleccionada = asignacion, columnaSeleccionadaId = null, notas = emptyMap())
         if (estado.modoFoiraDeLina) {
             viewModelScope.launch {
@@ -199,6 +207,7 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun seleccionarTrimestre(trimestre: Trimestre) {
+        SeleccionActual.gardarTrimestre(getApplication(), trimestre.orde)
         estado = estado.copy(trimestreSeleccionado = trimestre, columnaSeleccionadaId = null, notas = emptyMap())
         if (estado.modoFoiraDeLina) {
             val asignacion = estado.asignacionSeleccionada ?: return
@@ -213,6 +222,34 @@ class DestrezasViewModel(application: Application) : AndroidViewModel(applicatio
     fun seleccionarColumna(id: Int) {
         estado = estado.copy(columnaSeleccionadaId = id, notas = emptyMap())
         if (estado.modoFoiraDeLina) cargarNotasOffline() else cargarNotas()
+    }
+
+    /**
+     * Ao entrar nas Destrezas: segue a materia e o trimestre que se elixiron noutras pantallas
+     * (Caderno...) e, sen conexión, volve ler a caché do disco (pode ter cambiado).
+     */
+    fun sincronizarSeleccionGardada() {
+        if (estado.cargando) return
+        val actualA = estado.asignacionSeleccionada ?: return
+        val actualT = estado.trimestreSeleccionado ?: return
+        val guardadaA = SeleccionActual.asignacionId(getApplication())
+        val ordeG = SeleccionActual.trimestreOrde(getApplication())
+        val novaA = estado.asignacions.firstOrNull { it.id == guardadaA } ?: actualA
+        val novoT = estado.trimestres.firstOrNull { it.orde == ordeG } ?: actualT
+        val mudou = novaA.id != actualA.id || novoT.id != actualT.id
+        if (mudou) {
+            estado = estado.copy(
+                asignacionSeleccionada = novaA, trimestreSeleccionado = novoT,
+                columnaSeleccionadaId = null, notas = emptyMap()
+            )
+        }
+        if (estado.modoFoiraDeLina) {
+            viewModelScope.launch {
+                recargarColumnasOffline(novaA, CacheOffline.listarAsignacionsCacheadas(getApplication()), null)
+            }
+        } else if (mudou) {
+            recargarColumnas()
+        }
     }
 
     private fun recargarColumnas(columnaASeleccionar: Int? = null) {

@@ -100,6 +100,10 @@ fun DestrezasScreen(
     viewModel: DestrezasViewModel = viewModel()
 ) {
     val estado = viewModel.estado
+
+    // Ao entrar: segue a materia e o trimestre elixidos noutras pantallas (Caderno...) e, sen conexión,
+    // volve ler a caché do disco.
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.sincronizarSeleccionGardada() }
     val animar = animarTransicions()
     var enLista by rememberSaveable { mutableStateOf(false) }
 

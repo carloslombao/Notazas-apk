@@ -52,9 +52,9 @@ fun CadernoScreen(
     val estado = viewModel.estado
     val scopeDesglose = rememberCoroutineScope()
 
-    // Sen conexión, os datos vénse da caché do disco, que poden cambiar mentres a app está aberta
-    // (Actitude, Destrezas, o refresco de arranque): ao entrar neste Caderno volven ler.
-    LaunchedEffect(Unit) { viewModel.recargarSeOffline() }
+    // Ao entrar: segue a materia e o trimestre que se elixiron noutras pantallas (SeleccionActual) e,
+    // sen conexión, volve ler a caché do disco (pode ter cambiado: Actitude, Destrezas, refresco de arranque).
+    LaunchedEffect(Unit) { viewModel.sincronizarSeleccionGardada() }
     // Alumno cuxas notas (columna a columna) están abertas; null = lista da clase.
     var alumnoAberto by rememberSaveable { mutableStateOf<Int?>(null) }
     // Par (alumnoId, nome) do alumno cuxo desglose de TODAS as materias está aberto.

@@ -17,6 +17,7 @@ import com.notazas.mobil.datos.modelos.FilaAlumnoGradebook
 import com.notazas.mobil.datos.modelos.NotaUpdateIn
 import com.notazas.mobil.datos.modelos.PonderacionOut
 import com.notazas.mobil.datos.modelos.Trimestre
+import com.notazas.mobil.datos.local.SeleccionActual
 import com.notazas.mobil.datos.offline.ASPECTOS_POR_DEFECTO
 import com.notazas.mobil.datos.offline.CacheAsignacionEntrada
 import com.notazas.mobil.datos.offline.CacheOffline
@@ -114,6 +115,27 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         return doDisco
     }
 
+    /**
+     * Ao entrar no Caderno: se noutra pantalla (p. ex. Destrezas) se cambiou de materia ou de
+     * trimestre, segue esa escolla (está gardada en SeleccionActual); se non cambiou nada, só
+     * recarga os datos do disco cando estamos sen conexión.
+     */
+    fun sincronizarSeleccionGardada() {
+        if (estado.cargando) return
+        val actualA = estado.asignacionSeleccionada ?: return
+        val actualT = estado.trimestreSeleccionado ?: return
+        val guardadaA = SeleccionActual.asignacionId(getApplication())
+        val ordeG = SeleccionActual.trimestreOrde(getApplication())
+        val novaA = estado.asignacions.firstOrNull { it.id == guardadaA } ?: actualA
+        val novoT = estado.trimestres.firstOrNull { it.orde == ordeG } ?: actualT
+        if (novaA.id == actualA.id && novoT.id == actualT.id) {
+            recargarSeOffline()
+            return
+        }
+        estado = estado.copy(asignacionSeleccionada = novaA, trimestreSeleccionado = novoT, erroGardar = null)
+        recargar(novaA, novoT)
+    }
+
     /** Ao volver a esta pantalla: se estamos sen conexión, recarga os datos do disco. */
     fun recargarSeOffline() {
         if (!estado.modoFoiraDeLina || estado.cargando) return
@@ -135,8 +157,14 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
                 val asignacions = ApiClient.servizo.listarAsignacions()
                 val trimestres = ApiClient.servizo.listarTrimestres().filter { it.orde <= 3 }.sortedBy { it.orde }
 
-                val asignacionPorDefecto = asignacions.firstOrNull { it.esMina } ?: asignacions.firstOrNull()
-                val trimestrePorDefecto = trimestres.firstOrNull { it.activo } ?: trimestres.firstOrNull()
+                // Por defecto: a última materia e trimestre que elixiu o profesor (compartido coas outras
+                // pantallas); se non hai, a primeira propia e o trimestre activo.
+                val guardada = SeleccionActual.asignacionId(getApplication())
+                val asignacionPorDefecto = asignacions.firstOrNull { it.id == guardada }
+                    ?: asignacions.firstOrNull { it.esMina } ?: asignacions.firstOrNull()
+                val ordeGardada = SeleccionActual.trimestreOrde(getApplication())
+                val trimestrePorDefecto = trimestres.firstOrNull { it.orde == ordeGardada }
+                    ?: trimestres.firstOrNull { it.activo } ?: trimestres.firstOrNull()
 
                 estado = estado.copy(
                     modoFoiraDeLina = false,
@@ -174,10 +202,13 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         }
         entradasOffline = entradas
         val asignacions = entradas.map { it.comoAsignacion() }.ordenadosPorNome { "${it.grupo} ${it.materia}" }
-        val asignacion = asignacions.first()
+        val guardada = SeleccionActual.asignacionId(getApplication())
+        val asignacion = asignacions.firstOrNull { it.id == guardada } ?: asignacions.first()
         val entrada = entradas.first { it.asignacion_id == asignacion.id }
-        // Trimestre por defecto: o último que xa ten columnas (o "actual" na práctica).
-        val trimestre = TRIMESTRES_OFFLINE.lastOrNull { entrada.snapshot.trimestres[it.nome]?.columnas?.isNotEmpty() == true }
+        // Trimestre por defecto: o que elixiu o profesor; se non, o último que xa ten columnas.
+        val ordeGardada = SeleccionActual.trimestreOrde(getApplication())
+        val trimestre = TRIMESTRES_OFFLINE.firstOrNull { it.orde == ordeGardada }
+            ?: TRIMESTRES_OFFLINE.lastOrNull { entrada.snapshot.trimestres[it.nome]?.columnas?.isNotEmpty() == true }
             ?: TRIMESTRES_OFFLINE.first()
 
         estado = estado.copy(
@@ -211,12 +242,14 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
     // ---------- Selección ----------
 
     fun seleccionarAsignacion(asignacion: Asignacion) {
+        SeleccionActual.gardarAsignacion(getApplication(), asignacion.id)
         estado = estado.copy(asignacionSeleccionada = asignacion, erroGardar = null)
         val trimestre = estado.trimestreSeleccionado ?: return
         recargar(asignacion, trimestre)
     }
 
     fun seleccionarTrimestre(trimestre: Trimestre) {
+        SeleccionActual.gardarTrimestre(getApplication(), trimestre.orde)
         estado = estado.copy(trimestreSeleccionado = trimestre, erroGardar = null)
         val asignacion = estado.asignacionSeleccionada ?: return
         recargar(asignacion, trimestre)

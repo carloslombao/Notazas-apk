@@ -12,6 +12,7 @@ object SeleccionActual {
     private const val FICHEIRO = "seleccion_actual"
     private const val CLAVE_ASIGNACION = "asignacion_id"
     private const val CLAVE_TRIMESTRE = "trimestre_orde"
+    private const val CLAVE_GRUPO = "grupo_nome"
 
     private fun prefs(contexto: Context) =
         contexto.applicationContext.getSharedPreferences(FICHEIRO, Context.MODE_PRIVATE)
@@ -25,6 +26,13 @@ object SeleccionActual {
 
     fun gardarAsignacion(contexto: Context, asignacionId: Int) {
         prefs(contexto).edit().putInt(CLAVE_ASIGNACION, asignacionId).apply()
+    }
+
+    /** Nome do grupo elixido no Caderno ("1ºA"): vale igual en liña e sen conexión (os ids non). */
+    fun grupoNome(contexto: Context): String? = prefs(contexto).getString(CLAVE_GRUPO, null)
+
+    fun gardarGrupo(contexto: Context, nome: String) {
+        prefs(contexto).edit().putString(CLAVE_GRUPO, nome).apply()
     }
 
     fun gardarTrimestre(contexto: Context, orde: Int) {

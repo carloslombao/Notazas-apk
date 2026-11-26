@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.notazas.mobil.datos.local.SeleccionActual
@@ -37,6 +38,8 @@ import com.notazas.mobil.datos.offline.refrescarCacheSeFaiFalta
 import com.notazas.mobil.datos.rede.ApiClient
 import com.notazas.mobil.datos.util.descargarPdfACache
 import com.notazas.mobil.datos.util.ordenadosPorNome
+import com.notazas.mobil.ui.componentes.corMateria
+import com.notazas.mobil.ui.componentes.coresDasMaterias
 import com.notazas.mobil.ui.screens.destrezas.Destreza
 import com.notazas.mobil.ui.screens.destrezas.FollaDestrezas
 import kotlinx.coroutines.CancellationException
@@ -103,8 +106,11 @@ data class CadernoUiState(
     val cargandoFolla: Boolean = false,
     val abrindoFicheiro: Boolean = false,
     /** Mensaxe curta e puntual para amosar (Toast) e logo limpar. */
-    val aviso: String? = null
+    val aviso: String? = null,
+    /** Cor de cada materia do grupo (nunca hai dúas iguais dentro do grupo). */
+    val cores: Map<String, Color> = emptyMap()
 ) {
+    fun corDe(materia: String): Color = cores[materia] ?: corMateria(materia)
     val grupoSeleccionado: GrupoCaderno? get() = grupos.firstOrNull { it.id == grupoSeleccionadoId }
 
     fun materia(asignacionId: Int): MateriaCaderno? = materias.firstOrNull { it.asignacion.id == asignacionId }
@@ -241,7 +247,8 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
         }
         estado = estado.copy(
             cargando = false, erro = null, datosDe = etiquetaDatosOffline(entradas.first().snapshot.modificado_en),
-            materias = materias, alumnos = unirAlumnos(materias)
+            materias = materias, alumnos = unirAlumnos(materias),
+            cores = coresDasMaterias(materias.map { it.asignacion.materia })
         )
     }
 
@@ -331,6 +338,7 @@ class CadernoViewModel(application: Application) : AndroidViewModel(application)
                 }
                 estado = estado.copy(
                     cargando = false, erro = null, materias = materias, alumnos = unirAlumnos(materias),
+                    cores = coresDasMaterias(materias.map { it.asignacion.materia }),
                     aviso = if (materias.size < grupo.asignacions.size) "Algunha materia non se puido cargar." else estado.aviso
                 )
             } catch (e: CancellationException) {

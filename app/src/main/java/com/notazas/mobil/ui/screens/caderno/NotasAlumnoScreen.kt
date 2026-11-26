@@ -96,7 +96,6 @@ import com.notazas.mobil.datos.rede.ApiClient
 import com.notazas.mobil.datos.util.intentAbrirPdf
 import com.notazas.mobil.datos.util.xerarSemanasCurso
 import com.notazas.mobil.ui.componentes.VisorPdf
-import com.notazas.mobil.ui.componentes.corMateria
 import com.notazas.mobil.ui.screens.destrezas.FollaDestrezasSheet
 import com.notazas.mobil.ui.screens.destrezas.animarTransicions
 import com.notazas.mobil.ui.screens.perfilalumno.GraficoActitude
@@ -301,7 +300,7 @@ fun NotasAlumnoScreen(
         }
 
         // ----- Nota final de cada materia -----
-        item { ResumoNotasFinais(materiasAlumno) }
+        item { ResumoNotasFinais(materiasAlumno, estado::corDe) }
 
         if (materiasAlumno.isEmpty()) {
             item {
@@ -319,7 +318,7 @@ fun NotasAlumnoScreen(
         materiasAlumno.forEach { (materia, fila) ->
             val asignacionId = materia.asignacion.id
             val nomeMateria = materia.asignacion.materia
-            val cor = corMateria(nomeMateria)
+            val cor = estado.corDe(nomeMateria)
             val columnas = materia.columnas
             val exames = columnas.filter { it.tipo == "exame" }
             val traballos = columnas.filter { it.tipo == "traballo" }
@@ -591,7 +590,7 @@ private fun PildoraNota(nota: Double?) {
 
 /** Nota final de CADA materia do alumno (un punto da cor da materia + nome + nota). */
 @Composable
-private fun ResumoNotasFinais(lista: List<MateriaAlumno>) {
+private fun ResumoNotasFinais(lista: List<MateriaAlumno>, corDe: (String) -> Color) {
     Card(
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest)
@@ -607,7 +606,7 @@ private fun ResumoNotasFinais(lista: List<MateriaAlumno>) {
             }
             lista.forEach { (materia, fila) ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(12.dp).clip(CircleShape).background(corMateria(materia.asignacion.materia)))
+                    Box(Modifier.size(12.dp).clip(CircleShape).background(corDe(materia.asignacion.materia)))
                     Spacer(Modifier.width(10.dp))
                     Text(
                         materia.asignacion.materia, style = MaterialTheme.typography.bodyLarge,

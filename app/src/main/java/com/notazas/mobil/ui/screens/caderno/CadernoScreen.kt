@@ -46,7 +46,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.notazas.mobil.datos.modelos.UsuarioSelector
 import com.notazas.mobil.ui.componentes.abreviaturaMateria
-import com.notazas.mobil.ui.componentes.corMateria
 
 /**
  * Caderno por GRUPO: o único filtro é o curso/grupo ("1ºA"). Cada alumno amosa chips de cor coa
@@ -137,7 +136,7 @@ private fun ListaGrupo(estado: CadernoUiState, viewModel: CadernoViewModel, onAb
                         }
                     }
 
-                    item { ResumoMaterias(estado.materias) }
+                    item { ResumoMaterias(estado.materias, estado::corDe) }
 
                     item {
                         OutlinedTextField(
@@ -151,7 +150,7 @@ private fun ListaGrupo(estado: CadernoUiState, viewModel: CadernoViewModel, onAb
                     }
 
                     items(alumnosFiltrados, key = { it.alumnoId }) { alumno ->
-                        TarxetaAlumno(alumno, estado.materias, onClick = { onAbrir(alumno.alumnoId) })
+                        TarxetaAlumno(alumno, estado.materias, estado::corDe, onClick = { onAbrir(alumno.alumnoId) })
                     }
                 }
             }
@@ -186,7 +185,7 @@ private fun SelectorGrupo(grupos: List<GrupoCaderno>, seleccionadoId: Int?, onSe
 /** Materias do grupo, cada unha da súa cor (lenda do código de cores), coa media da clase. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ResumoMaterias(materias: List<MateriaCaderno>) {
+private fun ResumoMaterias(materias: List<MateriaCaderno>, corDe: (String) -> Color) {
     if (materias.isEmpty()) return
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -200,7 +199,7 @@ private fun ResumoMaterias(materias: List<MateriaCaderno>) {
             )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 materias.forEach { materia ->
-                    val cor = corMateria(materia.asignacion.materia)
+                    val cor = corDe(materia.asignacion.materia)
                     val media = materia.filas.mapNotNull { it.nota_final }.let { if (it.isEmpty()) null else it.average() }
                     Row(
                         Modifier
@@ -225,7 +224,7 @@ private fun ResumoMaterias(materias: List<MateriaCaderno>) {
 /** Alumno do grupo cun chip de cor por materia coa súa nota final. Tocar abre a súa ficha. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun TarxetaAlumno(alumno: AlumnoCaderno, materias: List<MateriaCaderno>, onClick: () -> Unit) {
+private fun TarxetaAlumno(alumno: AlumnoCaderno, materias: List<MateriaCaderno>, corDe: (String) -> Color, onClick: () -> Unit) {
     Card(
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
@@ -237,7 +236,7 @@ private fun TarxetaAlumno(alumno: AlumnoCaderno, materias: List<MateriaCaderno>,
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 materias.forEach { materia ->
                     val fila = materia.filas.firstOrNull { it.alumno_id == alumno.alumnoId } ?: return@forEach
-                    ChipNotaMateria(abreviaturaMateria(materia.asignacion.materia), fila.nota_final, corMateria(materia.asignacion.materia))
+                    ChipNotaMateria(abreviaturaMateria(materia.asignacion.materia), fila.nota_final, corDe(materia.asignacion.materia))
                 }
             }
         }
